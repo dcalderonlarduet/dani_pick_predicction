@@ -1,0 +1,16 @@
+{
+  "name": "tennis-oracle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Aplicacion web para analizar apuestas de tenis con un motor de factores explicito.",
+  "dependencies": {
+    "pg": "^8.16.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
+}

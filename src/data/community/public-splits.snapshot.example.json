@@ -1,0 +1,39 @@
+{
+  "updatedAt": "2026-05-29T12:00:00.000Z",
+  "source": "draftkings",
+  "bySport": {
+    "mlb": { "ok": true, "reason": "parsed", "source": "draftkings", "games": 10 },
+    "nba": { "ok": false, "reason": "seed", "source": null, "games": 0 },
+    "nfl": { "ok": false, "reason": "seed", "source": null, "games": 0 },
+    "wnba": { "ok": false, "reason": "seed", "source": null, "games": 0 }
+  },
+  "games": [
+    {
+      "sport": "mlb",
+      "away": "ATL Braves",
+      "home": "CIN Reds",
+      "startTime": "5/29, 06:40PM",
+      "source": "draftkings",
+      "markets": {
+        "moneyline": {
+          "pct_tickets_home": 17,
+          "pct_tickets_away": 84,
+          "pct_money_home": 12,
+          "pct_money_away": 88
+        },
+        "spread": {
+          "pct_tickets_home": 27,
+          "pct_money_home": 5,
+          "pct_tickets_away": 73,
+          "pct_money_away": 95
+        },
+        "total": {
+          "pct_tickets_over": 49,
+          "pct_money_over": 82,
+          "pct_tickets_under": 51,
+          "pct_money_under": 18
+        }
+      }
+    }
+  ]
+}

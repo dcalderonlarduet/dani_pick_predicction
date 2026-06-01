@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
+<title>DANY PICKS | Backtesting</title>
+<style>
+:root {
+  --bg: #06111c;
+  --panel: rgba(11, 29, 46, 0.86);
+  --line: rgba(100, 160, 220, 0.14);
+  --text: #ddeeff;
+  --text2: #9ab8d3;
+  --text3: #4d7392;
+  --good: #22c55e;
+  --warn: #fbbf24;
+  --blue: #4ec7ff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #06111c 0%, #0b1d2e 100%);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+.wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: 22px max(12px, env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.panel { border-radius: 18px; border: 1px solid var(--line); background: var(--panel); padding: 16px 18px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.title { font-size: 22px; font-weight: 800; margin-top: 4px; }
+.eyebrow { font-size: 10px; letter-spacing: 0.16em; color: var(--text3); }
+.nav-link { color: var(--blue); text-decoration: none; font-size: 13px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.kpi { padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0,0,0,0.18); }
+.kpi-lbl { font-size: 9px; letter-spacing: 0.12em; color: var(--text3); text-transform: uppercase; }
+.kpi-val { font-size: 24px; font-weight: 800; margin-top: 4px; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.filters select, .filters button {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: rgba(0,0,0,0.25); color: var(--text); font-size: 12px;
+}
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 8px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+th { color: var(--text3); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.empty { color: var(--text3); padding: 24px 0; text-align: center; }
+@media (max-width: 760px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .topbar { flex-direction: column; align-items: stretch; }
+  .panel { padding: 14px; }
+}
+@media (max-width: 480px) {
+  .kpis { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="panel topbar">
+    <div>
+      <div class="eyebrow">DANY PICKS BACKTEST</div>
+      <h1 class="title">Rendimiento del modelo</h1>
+    </div>
+    <div style="display:flex;gap:12px;">
+      <a class="nav-link" href="/stats.html">Tracker manual</a>
+      <a class="nav-link" href="/">Home</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="filters">
+      <select id="filter-sport">
+        <option value="">Todos los deportes</option>
+        <option value="nba">NBA</option>
+        <option value="nfl">NFL</option>
+        <option value="wnba">WNBA</option>
+        <option value="mlb">MLB</option>
+        <option value="football">Fútbol</option>
+      </select>
+      <select id="filter-color">
+        <option value="">Todos los colores</option>
+        <option value="verde">Verde</option>
+        <option value="amarillo">Amarillo</option>
+      </select>
+      <button type="button" id="reload-btn">Actualizar</button>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-lbl">Picks</div><div class="kpi-val" id="k-total">-</div></div>
+      <div class="kpi"><div class="kpi-lbl">Hit rate</div><div class="kpi-val" id="k-hit" style="color:var(--good)">-</div></div>
+      <div class="kpi"><div class="kpi-lbl">ROI (u)</div><div class="kpi-val" id="k-roi">-</div></div>
+      <div class="kpi"><div class="kpi-lbl">CLV medio</div><div class="kpi-val" id="k-clv" style="color:var(--warn)">-</div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="font-size:13px;letter-spacing:0.1em;margin-bottom:10px;color:var(--text2)">CALIBRACIÓN</h2>
+    <div id="calibration-table"></div>
+  </section>
+
+  <section class="panel">
+    <h2 style="font-size:13px;letter-spacing:0.1em;margin-bottom:10px;color:var(--text2)">POR DEPORTE</h2>
+    <div id="sport-table"></div>
+  </section>
+</main>
+<script>
+function pct(v) {
+  if (v == null || Number.isNaN(Number(v))) return "-";
+  return `${(Number(v) * (Math.abs(v) <= 1 ? 100 : 1)).toFixed(1)}%`;
+}
+function num(v, d = 2) {
+  if (v == null || Number.isNaN(Number(v))) return "-";
+  return Number(v).toFixed(d);
+}
+
+function renderCalibration(rows) {
+  if (!rows?.length) return '<div class="empty">Sin datos de calibración.</div>';
+  return `<table><thead><tr><th>Rango prob.</th><th>N</th><th>Predicho</th><th>Hit rate</th></tr></thead><tbody>${
+    rows.map((r) => `<tr><td>${r.range}</td><td>${r.n}</td><td>${pct(r.predicted_avg)}</td><td>${pct(r.hitRate)}</td></tr>`).join("")
+  }</tbody></table>`;
+}
+
+function renderSportTable(bySport) {
+  const entries = Object.entries(bySport || {});
+  if (!entries.length) return '<div class="empty">Sin picks por deporte.</div>';
+  return `<table><thead><tr><th>Deporte</th><th>Picks</th><th>Hit rate</th><th>ROI</th><th>CLV</th></tr></thead><tbody>${
+    entries.map(([sport, s]) => `<tr><td>${sport.toUpperCase()}</td><td>${s.totalPicks}</td><td>${pct(s.hitRate)}</td><td>${num(s.roi, 1)}%</td><td>${num(s.clv_medio, 3)}</td></tr>`).join("")
+  }</tbody></table>`;
+}
+
+async function loadBacktest() {
+  const sport = document.getElementById("filter-sport").value;
+  const color = document.getElementById("filter-color").value;
+  const params = new URLSearchParams({ settle: "1" });
+  if (sport) params.set("sport", sport);
+  if (color) params.set("color", color);
+
+  const [statsRes, clvRes] = await Promise.all([
+    fetch(`/api/backtest/stats?${params}`),
+    fetch(`/api/backtest/clv?${params}`),
+  ]);
+  const stats = await statsRes.json().catch(() => ({}));
+  const clv = await clvRes.json().catch(() => ({}));
+
+  if (!statsRes.ok) {
+    document.getElementById("k-total").textContent = "!";
+    document.getElementById("calibration-table").innerHTML = `<div class="empty">${stats.error || "Backtest no disponible"}</div>`;
+    return;
+  }
+
+  document.getElementById("k-total").textContent = stats.totalPicks ?? 0;
+  document.getElementById("k-hit").textContent = pct(stats.hitRate);
+  document.getElementById("k-roi").textContent = `${num(stats.roi, 1)}%`;
+  document.getElementById("k-clv").textContent = num(clv.clv_medio_global ?? stats.clv_medio, 3);
+  document.getElementById("calibration-table").innerHTML = renderCalibration(stats.calibration);
+  document.getElementById("sport-table").innerHTML = renderSportTable(stats.by_sport);
+}
+
+document.getElementById("reload-btn").addEventListener("click", loadBacktest);
+document.getElementById("filter-sport").addEventListener("change", loadBacktest);
+document.getElementById("filter-color").addEventListener("change", loadBacktest);
+loadBacktest();
+setInterval(loadBacktest, 5 * 60 * 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dany-picks-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-danypicks}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-danypicks}"]
+      interval: 3s
+      timeout: 5s
+      retries: 12
+      start_period: 8s
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./001_create_picks_tracker.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./002_pick_telegram_sent.sql:/docker-entrypoint-initdb.d/002_telegram_sent.sql:ro
+      - ./003_backtesting_clv.sql:/docker-entrypoint-initdb.d/003_backtesting_clv.sql:ro
+      - ./004_picks_history.sql:/docker-entrypoint-initdb.d/004_picks_history.sql:ro
+
+  tennis-oracle:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tennis-oracle
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./public:/app/public:ro
+      - ./src/data:/app/src/data
+    environment:
+      PORT: 3000
+      TENNIS_DATA_PROVIDER: ${TENNIS_DATA_PROVIDER:-odds-api-io}
+      TENNIS_ODDS_PROVIDER: ${TENNIS_ODDS_PROVIDER:-odds-api-io}
+      MATCHSTAT_RAPIDAPI_KEY: ${MATCHSTAT_RAPIDAPI_KEY:-}
+      MATCHSTAT_RAPIDAPI_HOST: ${MATCHSTAT_RAPIDAPI_HOST:-tennis-api-atp-wta-itf.p.rapidapi.com}
+      MATCHSTAT_BASE_URL: ${MATCHSTAT_BASE_URL:-https://tennis-api-atp-wta-itf.p.rapidapi.com}
+      MATCHSTAT_TOURS: ${MATCHSTAT_TOURS:-atp,wta}
+      MATCHSTAT_FIXTURE_INCLUDES: ${MATCHSTAT_FIXTURE_INCLUDES:-round,tournament,tournament.court,tournament.rank,h2h}
+      MATCHSTAT_PLAYER_GROUP: ${MATCHSTAT_PLAYER_GROUP:-singles}
+      MATCHSTAT_PAGE_SIZE: ${MATCHSTAT_PAGE_SIZE:-20}
+      MATCHSTAT_RANKINGS_PAGE_SIZE: ${MATCHSTAT_RANKINGS_PAGE_SIZE:-200}
+      MATCHSTAT_RECENT_MATCHES_PAGE_SIZE: ${MATCHSTAT_RECENT_MATCHES_PAGE_SIZE:-12}
+      ESPN_SCOREBOARD_ENABLED: ${ESPN_SCOREBOARD_ENABLED:-true}
+      ESPN_TENNIS_LEAGUES: ${ESPN_TENNIS_LEAGUES:-atp,wta}
+      SPORTDEVS_ENABLED: ${SPORTDEVS_ENABLED:-false}
+      SPORTDEVS_API_KEY: ${SPORTDEVS_API_KEY:-}
+      SPORTDEVS_RAPIDAPI_KEY: ${SPORTDEVS_RAPIDAPI_KEY:-}
+      SPORTDEVS_RAPIDAPI_HOST: ${SPORTDEVS_RAPIDAPI_HOST:-}
+      SPORTDEVS_BASE_URL: ${SPORTDEVS_BASE_URL:-https://tennis.sportdevs.com}
+      API_TENNIS_API_KEY: ${API_TENNIS_API_KEY:-}
+      ODDS_API_IO_KEY: ${ODDS_API_IO_KEY:-}
+      ODDS_API_IO_BOOKMAKERS: ${ODDS_API_IO_BOOKMAKERS:-Bet365,Winamax FR}
+      ODDS_API_IO_BASE_URL: ${ODDS_API_IO_BASE_URL:-https://api.odds-api.io/v3}
+      MLB_ODDS_PROVIDER: ${MLB_ODDS_PROVIDER:-odds-api-io}
+      THE_ODDS_API_KEY: ${THE_ODDS_API_KEY:-}
+      SPORTRADAR_API_KEY: ${SPORTRADAR_API_KEY:-}
+      SPORTRADAR_ACCESS_LEVEL: ${SPORTRADAR_ACCESS_LEVEL:-trial}
+      SPORTRADAR_LANGUAGE: ${SPORTRADAR_LANGUAGE:-en}
+      TENNIS_TIMEZONE: ${TENNIS_TIMEZONE:-Europe/Madrid}
+      TENNIS_MAX_MATCHES: ${TENNIS_MAX_MATCHES:-12}
+      TENNIS_RECENT_WINDOW_DAYS: ${TENNIS_RECENT_WINDOW_DAYS:-120}
+      FLASHSCORE_SNAPSHOT_FILE: ${FLASHSCORE_SNAPSHOT_FILE:-/app/src/data/community/flashscore-live.snapshot.example.json}
+      ODDSHARVESTER_SNAPSHOT_FILE: ${ODDSHARVESTER_SNAPSHOT_FILE:-/app/src/data/community/oddsharvester.snapshot.example.json}
+      PUBLIC_SPLITS_ENABLED: ${PUBLIC_SPLITS_ENABLED:-true}
+      PUBLIC_SPLITS_INTERVAL_MS: ${PUBLIC_SPLITS_INTERVAL_MS:-1200000}
+      PUBLIC_SPLITS_SNAPSHOT_FILE: ${PUBLIC_SPLITS_SNAPSHOT_FILE:-/app/src/data/community/public-splits.snapshot.json}
+      PUBLIC_SPLITS_SEED_FILE: ${PUBLIC_SPLITS_SEED_FILE:-/app/src/data/community/public-splits.snapshot.example.json}
+      # Host postgres = servicio Docker (no localhost del .env del host)
+      DATABASE_URL: postgresql://${PGUSER:-postgres}:${PGPASSWORD:-postgres}@postgres:5432/${PGDATABASE:-danypicks}
+      PGHOST: postgres
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-danypicks}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGSSL: ${PGSSL:-false}
+      MLB_MAX_ODDS: ${MLB_MAX_ODDS:-3.50}
+      MLB_MIN_ODDS: ${MLB_MIN_ODDS:-1.30}
+
+volumes:
+  postgres_data:

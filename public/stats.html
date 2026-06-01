@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
+<title>DANY PICKS | Estadísticas</title>
+<style>
+:root {
+  --bg: #06111c;
+  --bg2: #0b1d2e;
+  --panel: rgba(11, 29, 46, 0.86);
+  --line: rgba(100, 160, 220, 0.14);
+  --line2: rgba(100, 160, 220, 0.24);
+  --text: #ddeeff;
+  --text2: #9ab8d3;
+  --text3: #4d7392;
+  --good: #22c55e;
+  --warn: #fbbf24;
+  --danger: #ef4444;
+  --blue: #4ec7ff;
+  --purple: #a78bfa;
+  --shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+  --font-ui: "Segoe UI Variable Text", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 10% 0%, rgba(30, 90, 180, 0.24), transparent 38%),
+    radial-gradient(ellipse at 90% 5%, rgba(20, 70, 140, 0.16), transparent 32%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg2) 52%, #081524 100%);
+  color: var(--text);
+  font-family: var(--font-ui);
+  line-height: 1.45;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(100, 160, 220, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(100, 160, 220, 0.03) 1px, transparent 1px);
+  background-size: 38px 38px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.6), transparent 80%);
+}
+
+.wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 22px max(12px, env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.topbar,
+.panel {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.topbar {
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.eyebrow {
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin-top: 6px;
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 900;
+  letter-spacing: -0.05em;
+  font-family: var(--font-display);
+}
+
+.copy {
+  margin-top: 6px;
+  color: var(--text2);
+  font-size: 12px;
+}
+
+.nav-link,
+.action-btn,
+.tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+}
+
+.nav-link {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(78, 199, 255, 0.24);
+  background: rgba(78, 199, 255, 0.1);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.panel {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.line {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.section-note {
+  color: var(--text3);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  font-family: var(--font-mono);
+}
+
+.cfg-row,
+.day-banner,
+.stats-kpis {
+  display: grid;
+  gap: 10px;
+}
+
+.cfg-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cfg-card,
+.day-cell,
+.skpi,
+.sport-card,
+.pending-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(6, 17, 28, 0.28);
+}
+
+.cfg-label,
+.day-lbl,
+.skpi-lbl {
+  color: var(--text3);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.cfg-input {
+  margin-top: 7px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(100, 160, 220, 0.18);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+  font: inherit;
+}
+
+.cfg-actions {
+  display: flex;
+  align-items: end;
+}
+
+.action-btn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(78, 199, 255, 0.24);
+  background: rgba(78, 199, 255, 0.1);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.day-banner,
+.stats-kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.day-num,
+.skpi-val {
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 900;
+  font-family: var(--font-mono);
+}
+
+.day-sub,
+.skpi-sub {
+  margin-top: 4px;
+  color: var(--text3);
+  font-size: 9px;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text3);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tab.active {
+  color: var(--blue);
+  border-color: rgba(78, 199, 255, 0.4);
+  background: rgba(78, 199, 255, 0.08);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  text-align: left;
+  font-size: 10px;
+}
+
+th {
+  color: var(--text3);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.spos { color: var(--good); }
+.sneg { color: var(--danger); }
+
+.bar-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.empty {
+  padding: 24px 16px;
+  border-radius: 12px;
+  border: 1px dashed rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+  color: var(--text3);
+  text-align: center;
+  font-size: 11px;
+}
+
+.sports-list,
+.pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sport-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pending-top {
+  color: var(--text3);
+  font-size: 8px;
+  margin-bottom: 8px;
+}
+
+.pending-meta {
+  font-size: 8px;
+  color: var(--text3);
+  margin-bottom: 3px;
+}
+
+.pending-match {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pending-pick {
+  margin-top: 2px;
+  color: var(--warn);
+  font-size: 10px;
+}
+
+.pending-strip {
+  margin-top: 7px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.18);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 9px;
+  font-family: var(--font-mono);
+}
+
+.pending-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.result-btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text2);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.result-btn.g { border-color: rgba(34,197,94,.3); background: rgba(34,197,94,.12); color: var(--good); }
+.result-btn.p { border-color: rgba(239,68,68,.24); background: rgba(239,68,68,.1); color: #ff9b9b; }
+.result-btn.v { border-color: rgba(100,160,220,.14); }
+
+@media (max-width: 760px) {
+  .cfg-row,
+  .day-banner,
+  .stats-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .panel { padding: 14px; }
+}
+
+@media (max-width: 480px) {
+  .cfg-row,
+  .day-banner,
+  .stats-kpis { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="topbar">
+    <div>
+      <div class="eyebrow">DANY PICKS TRACKER</div>
+      <h1 class="title">Estadísticas detalladas</h1>
+      <p class="copy">Historial, rendimiento por deporte, picks pendientes y control de bankroll.</p>
+    </div>
+    <a class="nav-link" href="/">Volver a la home</a>
+    <a class="nav-link" href="/backtest.html">Backtesting modelo</a>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <span class="section-title">CONFIGURACIÓN</span>
+      <div class="line"></div>
+      <span class="section-note">Sincronizado con PostgreSQL</span>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-card">
+        <div class="cfg-label">Bankroll inicial (EUR)</div>
+        <input class="cfg-input" id="cfg-inicial" type="number" min="1" value="100" />
+      </div>
+      <div class="cfg-card">
+        <div class="cfg-label">Stake referencia (EUR)</div>
+        <input class="cfg-input" id="cfg-stake" type="number" min="1" value="10" />
+      </div>
+      <div class="cfg-actions">
+        <button class="action-btn" type="button" id="save-cfg-btn">Guardar configuración</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <span class="section-title">RESUMEN DEL DÍA</span>
+      <div class="line"></div>
+      <span class="section-note" id="summary-note">Cargando métricas...</span>
+    </div>
+
+    <div class="day-banner">
+      <div class="day-cell"><div class="day-num" style="color:var(--good)" id="db-g">-</div><div class="day-lbl">Ganados hoy</div><div class="day-sub" id="db-g-sub">-</div></div>
+      <div class="day-cell"><div class="day-num" style="color:var(--danger)" id="db-p">-</div><div class="day-lbl">Perdidos hoy</div><div class="day-sub" id="db-p-sub">-</div></div>
+      <div class="day-cell"><div class="day-num" style="color:var(--blue)" id="db-pct">-</div><div class="day-lbl">% acierto hoy</div><div class="day-sub" id="db-pct-sub">-</div></div>
+      <div class="day-cell"><div class="day-num" id="db-roi">-</div><div class="day-lbl">ROI del día</div><div class="day-sub">sobre apostado</div></div>
+    </div>
+
+    <div class="stats-kpis">
+      <div class="skpi"><div class="skpi-lbl">Picks totales</div><div class="skpi-val" style="color:var(--blue)" id="sk-total">-</div><div class="skpi-sub" id="sk-total-sub">-</div></div>
+      <div class="skpi"><div class="skpi-lbl">% Acierto global</div><div class="skpi-val" style="color:var(--warn)" id="sk-pct">-</div><div class="skpi-sub" id="sk-pct-sub">-</div></div>
+      <div class="skpi"><div class="skpi-lbl">ROI histórico</div><div class="skpi-val" id="sk-roi">-</div><div class="skpi-sub" id="sk-roi-sub">-</div></div>
+      <div class="skpi"><div class="skpi-lbl">Pendientes</div><div class="skpi-val" style="color:var(--warn)" id="sk-pend">-</div><div class="skpi-sub" id="sk-pend-sub">sin resultado</div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="tabs">
+      <button class="tab active" type="button" data-tab="historial">Historial</button>
+      <button class="tab" type="button" data-tab="deporte">Por deporte</button>
+      <button class="tab" type="button" data-tab="pendientes">Pendientes</button>
+    </div>
+    <div id="tab-content" class="empty">Cargando estadísticas del tracker...</div>
+  </section>
+</main>
+
+<script>
+let statsData = null;
+let pendingData = [];
+let currentTab = "historial";
+
+function esc(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function readJsonSafe(response) {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { error: text || `HTTP ${response.status}` };
+  }
+}
+
+function setText(id, value) {
+  const node = document.getElementById(id);
+  if (node) node.textContent = value;
+}
+
+function getTrackerDateString(dateLike) {
+  const date = dateLike ? new Date(dateLike) : new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Madrid",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value || "0000";
+  const month = parts.find((part) => part.type === "month")?.value || "01";
+  const day = parts.find((part) => part.type === "day")?.value || "01";
+  return `${year}-${month}-${day}`;
+}
+
+function getTrackerDaySummary(history = [], dateKey = getTrackerDateString()) {
+  const found = (history || []).find((day) => String(day?.fecha || "").slice(0, 10) === dateKey);
+  if (found) return found;
+  return {
+    fecha: dateKey,
+    total: 0,
+    ganados: 0,
+    perdidos: 0,
+    pendientes: 0,
+    pct_acierto: 0,
+    ganancia_dia: 0,
+    roi_dia: 0,
+  };
+}
+
+function updateSummary() {
+  if (!statsData) return;
+  const global = statsData.global || {};
+  const bankroll = statsData.bankroll || {};
+  const history = statsData.ultimos_7_dias || [];
+  const today = getTrackerDaySummary(history);
+  const todayResolved = Number(today.ganados || 0) + Number(today.perdidos || 0);
+  const todayPct = todayResolved ? ((Number(today.ganados || 0) / todayResolved) * 100).toFixed(1) : "-";
+  const todayRoi = Number(today.roi_dia || 0);
+  const globalResolved = Number(global.ganados || 0) + Number(global.perdidos || 0);
+  const globalPct = globalResolved ? ((Number(global.ganados || 0) / globalResolved) * 100).toFixed(1) : "0.0";
+  const globalRoi = Number(global.roi_pct || 0);
+
+  setText("db-g", Number(today.ganados || 0));
+  setText("db-p", Number(today.perdidos || 0));
+  setText("db-g-sub", `de ${Number(today.total || 0)} pronosticados`);
+  setText("db-p-sub", `${Number(today.pendientes || 0)} pendiente${Number(today.pendientes || 0) === 1 ? "" : "s"}`);
+  setText("db-pct", todayResolved ? `${todayPct}%` : "-");
+  setText("db-pct-sub", `${todayResolved} resueltos`);
+  setText("db-roi", Number.isFinite(todayRoi) ? `${todayRoi >= 0 ? "+" : ""}${todayRoi.toFixed(1)}%` : "-");
+  document.getElementById("db-roi").style.color = todayRoi >= 0 ? "#22c55e" : "#ef4444";
+
+  setText("sk-total", Number(global.total_picks || 0));
+  setText("sk-total-sub", `${Number(global.ganados || 0)}G / ${Number(global.perdidos || 0)}P`);
+  setText("sk-pct", `${globalPct}%`);
+  setText("sk-pct-sub", "sobre picks resueltos");
+  setText("sk-roi", `${globalRoi >= 0 ? "+" : ""}${globalRoi.toFixed(1)}%`);
+  document.getElementById("sk-roi").style.color = globalRoi >= 0 ? "#22c55e" : "#ef4444";
+  setText("sk-roi-sub", "histórico total");
+  setText("sk-pend", Number(global.pendientes || 0));
+  setText("summary-note", `Bankroll actual ${Number(bankroll.actual || 0).toFixed(2)} € · rentabilidad ${Number(bankroll.rentabilidad_pct || 0).toFixed(1)}%`);
+}
+
+function renderHistorial() {
+  const history = statsData?.ultimos_7_dias || [];
+  if (!history.length) {
+    return '<div class="empty">Todavía no hay historial en el tracker.</div>';
+  }
+
+  let cumulativeRoi = 0;
+  const rows = [...history].reverse().map((day) => {
+    const resolved = Number(day.ganados || 0) + Number(day.perdidos || 0);
+    const pct = resolved ? ((Number(day.ganados || 0) / resolved) * 100).toFixed(1) : "-";
+    const roi = Number(day.roi_dia || 0);
+    cumulativeRoi += roi;
+    const roiClass = roi >= 0 ? "spos" : "sneg";
+    const cumulativeClass = cumulativeRoi >= 0 ? "spos" : "sneg";
+    const dateLabel = new Date(day.fecha || Date.now()).toLocaleDateString("es-ES", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+
+    return `
+      <tr>
+        <td>${esc(dateLabel)}</td>
+        <td style="color:#4ec7ff;font-weight:700">${Number(day.total || 0)}</td>
+        <td><span style="color:#22c55e">${Number(day.ganados || 0)}</span>/<span style="color:#ef4444">${Number(day.perdidos || 0)}</span></td>
+        <td style="color:#4d7392">${Number(day.pendientes || 0)}</td>
+        <td>
+          <div style="font-weight:700;color:${pct === "-" ? "#4d7392" : Number(pct) >= 60 ? "#22c55e" : Number(pct) >= 45 ? "#fbbf24" : "#ef4444"}">${pct === "-" ? "-" : `${pct}%`}</div>
+          <div class="bar-track" style="width:56px"><div class="bar-fill" style="width:${pct === "-" ? 0 : pct}%"></div></div>
+        </td>
+        <td class="${roiClass}">${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%</td>
+        <td class="${cumulativeClass}" style="font-weight:900">${cumulativeRoi >= 0 ? "+" : ""}${cumulativeRoi.toFixed(1)}%</td>
+      </tr>
+    `;
+  }).reverse().join("");
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Picks</th>
+            <th>G/P</th>
+            <th>Pend</th>
+            <th>% acierto</th>
+            <th>ROI día</th>
+            <th>ROI acum.</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderBySport() {
+  const sports = statsData?.por_deporte || [];
+  if (!sports.length) {
+    return '<div class="empty">Aún no hay picks resueltos por deporte.</div>';
+  }
+
+  const colors = { tennis: "#a78bfa", mlb: "#f97316", futbol: "#22d3ee" };
+
+  return `
+    <div class="sports-list">
+      ${sports.map((item) => {
+        const resolved = Number(item.ganados || 0) + Number(item.perdidos || 0);
+        const pct = resolved ? ((Number(item.ganados || 0) / resolved) * 100).toFixed(1) : "0.0";
+        const roi = Number(item.roi_pct || 0);
+        const color = colors[item.sport] || "#4ec7ff";
+        return `
+          <div class="sport-card">
+            <div class="sport-row">
+              <div>
+                <div style="font-size:11px;font-weight:800;color:${color}">${esc(String(item.sport || "").toUpperCase())}</div>
+                <div style="font-size:9px;color:#4d7392">${Number(item.total || 0)} picks · <span style="color:#22c55e">${Number(item.ganados || 0)}G</span> · <span style="color:#ef4444">${Number(item.perdidos || 0)}P</span></div>
+              </div>
+              <div style="display:flex;gap:16px">
+                <div>
+                  <div style="font-size:7px;color:#4d7392;letter-spacing:1px">% acierto</div>
+                  <div style="font-size:16px;font-weight:900;font-family:var(--font-mono);color:#fbbf24">${pct}%</div>
+                </div>
+                <div>
+                  <div style="font-size:7px;color:#4d7392;letter-spacing:1px">ROI</div>
+                  <div style="font-size:16px;font-weight:900;font-family:var(--font-mono);color:${roi >= 0 ? "#22c55e" : "#ef4444"}">${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%</div>
+                </div>
+              </div>
+            </div>
+            <div class="bar-track" style="margin-top:8px"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderPending() {
+  if (!pendingData.length) {
+    return '<div class="empty">No hay picks pendientes en el tracker.</div>';
+  }
+
+  return `
+    <div class="pending-list">
+      <div class="pending-top">${pendingData.length} pick${pendingData.length === 1 ? "" : "s"} esperando resultado</div>
+      ${pendingData.map((pick) => {
+        const evText = pick.ev_pct != null ? `+${Number(pick.ev_pct).toFixed(1)}%` : "-";
+        const winReturn = pick.cuota ? `${(((Number(pick.cuota) - 1) * 100)).toFixed(1)}%` : "-";
+        return `
+          <div class="pending-card">
+            <div class="pending-meta">${esc(String(pick.sport || "").toUpperCase())} · ${esc(pick.hora_partido || "")} · ${esc(pick.liga || "")}</div>
+            <div class="pending-match">${esc(pick.partido)}</div>
+            <div class="pending-pick">${esc(pick.pick_label)}</div>
+            <div class="pending-strip">
+              <span>Cuota <strong style="color:#fde047">${pick.cuota || "-"}</strong></span>
+              <span>EV <strong style="color:#22c55e">${evText}</strong></span>
+              <span>Si gana <strong style="color:#22c55e">+${winReturn}</strong></span>
+              <span style="color:#f97316">${esc(pick.casa || "")}</span>
+            </div>
+            <div class="pending-actions">
+              <button class="result-btn g" type="button" onclick="markR(${pick.id},'ganado')">Ganado</button>
+              <button class="result-btn p" type="button" onclick="markR(${pick.id},'perdido')">Perdido</button>
+              <button class="result-btn v" type="button" onclick="markR(${pick.id},'void')">Void</button>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderTabContent() {
+  const container = document.getElementById("tab-content");
+  if (!statsData) {
+    container.innerHTML = '<div class="empty">Tracker no disponible.</div>';
+    return;
+  }
+  if (currentTab === "historial") container.innerHTML = renderHistorial();
+  if (currentTab === "deporte") container.innerHTML = renderBySport();
+  if (currentTab === "pendientes") container.innerHTML = renderPending();
+}
+
+async function loadStatsPanel() {
+  const [statsResponse, pendingResponse] = await Promise.all([
+    fetch("/api/stats"),
+    fetch("/api/picks/pending"),
+  ]);
+
+  const statsPayload = await readJsonSafe(statsResponse);
+  const pendingPayload = await readJsonSafe(pendingResponse);
+
+  if (!statsResponse.ok) {
+    statsData = null;
+    pendingData = [];
+    document.getElementById("tab-content").innerHTML = `<div class="empty">${esc(statsPayload.error || "Tracker no disponible")}</div>`;
+    return;
+  }
+
+  statsData = statsPayload;
+  pendingData = pendingResponse.ok ? (pendingPayload.picks || []) : [];
+
+  const bankroll = statsData.bankroll || {};
+  document.getElementById("cfg-inicial").value = Number(bankroll.inicial || 100);
+  document.getElementById("cfg-stake").value = Number(bankroll.stake_default || 10);
+
+  updateSummary();
+  renderTabContent();
+}
+
+async function markR(id, resultado) {
+  const response = await fetch(`/api/picks/${id}/resultado`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resultado }),
+  });
+  const payload = await readJsonSafe(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "No se pudo actualizar el resultado");
+  }
+  await loadStatsPanel();
+}
+
+async function saveCfg() {
+  const response = await fetch("/api/bankroll", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bankroll_inicial: Number(document.getElementById("cfg-inicial").value),
+      stake_default: Number(document.getElementById("cfg-stake").value),
+    }),
+  });
+  const payload = await readJsonSafe(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "No se pudo guardar la configuración");
+  }
+  await loadStatsPanel();
+}
+
+document.querySelectorAll("[data-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    currentTab = button.dataset.tab;
+    document.querySelectorAll("[data-tab]").forEach((item) => item.classList.toggle("active", item === button));
+    renderTabContent();
+  });
+});
+
+document.getElementById("save-cfg-btn").addEventListener("click", async () => {
+  try {
+    await saveCfg();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+window.markR = async (...args) => {
+  try {
+    await markR(...args);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+loadStatsPanel();
+setInterval(loadStatsPanel, 5 * 60 * 1000);
+</script>
+</body>
+</html>
