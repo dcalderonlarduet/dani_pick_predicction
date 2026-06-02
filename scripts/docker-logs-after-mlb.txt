@@ -1,0 +1,25 @@
+﻿danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 19 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Stats incompletas para Washington Mystics vs Chicago Sky; usando medias de liga (API-Sports desactivado)
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 129689 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 132052 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Stats incompletas para Golden State Valkyries vs Portland Fire; usando medias de liga (API-Sports desactivado)
+danny-pick  | [WNBA-coherence] 1 pick(s) descartado(s) por contradicci├ç├╝n en partido Golden State Valkyries vs Portland Fire: game_total(under)
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 9 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 131935 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Stats incompletas para New York Liberty vs Toronto Tempo; usando medias de liga (API-Sports desactivado)
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 6 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 17 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Stats incompletas para Los Angeles Sparks vs Las Vegas Aces; usando medias de liga (API-Sports desactivado)
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 14 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Dato season_stats no disponible para team 11 ÔåÆ usando default 83
+danny-pick  | [ESPN-WNBA] Stats incompletas para Seattle Storm vs Phoenix Mercury; usando medias de liga (API-Sports desactivado)
+danny-pick  | [prewarm] An├â┬ílisis WNBA en cach├â┬® (+ notificaciones si hay picks nuevos).
+danny-pick  | [prewarm] An├â┬ílisis NFL en cach├â┬® (+ notificaciones si hay picks nuevos).
+danny-pick  | [quiniela-scheduler] Actualizando pronostico quiniela...
+danny-pick  | [quiniela] https://r.jina.ai/https://www.loteriasyapuestas.es/es/resultados/quiniela no contiene composicion en venta (0 filas)
+danny-pick  | [quiniela] https://r.jina.ai/https://www.loteriasyapuestas.es/es/quiniela no contiene composicion en venta (0 filas)
+danny-pick  | [quiniela] https://r.jina.ai/https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html no contiene composicion en venta (0 filas)
+danny-pick  | [quiniela] composicion en venta encontrada (J66) via https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html
+danny-pick  | [quiniela] meta jornada=null | enVenta=J66 (14 filas) | completed=0 bloques
+danny-pick  | [quiniela-scheduler] Sin cambios en el pron├â┬│stico
+danny-pick  | [prewarm] MLB fall├â┬│: getNamespaceStore is not defined

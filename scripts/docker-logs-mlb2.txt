@@ -1,0 +1,15 @@
+﻿danny-pick  | DANY PICKS disponible en http://localhost:3000
+danny-pick  | [telegram-scheduler] Pr├â┬│ximo resumen diario en 18 min (2026-06-03 00:05 Madrid)
+danny-pick  | [db] PostgreSQL conectado.
+danny-pick  | [analysis-cache] 7 snapshots restaurados desde BD al arrancar.
+danny-pick  | [public-splits] Actualizado (boot): 37 partidos ┬À fuente draftkings ┬À parcial
+danny-pick  | [quiniela-scheduler] Actualizando pronostico quiniela...
+danny-pick  | [quiniela] https://r.jina.ai/https://www.loteriasyapuestas.es/es/resultados/quiniela no contiene composicion en venta (0 filas)
+danny-pick  | [quiniela] https://r.jina.ai/https://www.loteriasyapuestas.es/es/quiniela no contiene composicion en venta (0 filas)
+danny-pick  | [quiniela] https://r.jina.ai/https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html no contiene composicion en venta (0 filas)
+danny-pick  | [quiniela] composicion en venta encontrada (J66) via https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html
+danny-pick  | [quiniela] meta jornada=null | enVenta=J66 (14 filas) | completed=0 bloques
+danny-pick  | [quiniela-scheduler] Sin cambios en el pron├â┬│stico
+danny-pick  | [mlb-cache] Schedule 2026-06-03 expirado por pitcher(s) pendiente(s) ÔÇö se recargar├í en el pr├│ximo an├ílisis.
+danny-pick  | [prewarm] An├â┬ílisis MLB en cach├â┬® (+ notificaciones si hay picks nuevos).
+danny-pick  | [backtesting] PG picks_history no existe, usando JSON: duplicate key value violates unique constraint "idx_picks_history_dedupe"

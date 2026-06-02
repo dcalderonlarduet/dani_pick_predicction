@@ -1,0 +1,5 @@
+﻿danny-pick  | DANY PICKS disponible en http://localhost:3000
+danny-pick  | [telegram-scheduler] Pr├â┬│ximo resumen diario en 20 min (2026-06-03 00:05 Madrid)
+danny-pick  | [db] PostgreSQL conectado.
+danny-pick  | [analysis-cache] 7 snapshots restaurados desde BD al arrancar.
+danny-pick  | [public-splits] Actualizado (boot): 37 partidos ┬À fuente draftkings ┬À parcial

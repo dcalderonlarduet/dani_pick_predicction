@@ -1,0 +1,50 @@
+{
+  "status": 200,
+  "date": "2026-06-02",
+  "games": 19,
+  "picks": 6,
+  "sampleGames": [
+    {
+      "hasPendingPitcher": false,
+      "pitcherDataQuality": "full",
+      "home": "Steven Matz",
+      "away": "Jack Flaherty"
+    },
+    {
+      "hasPendingPitcher": false,
+      "pitcherDataQuality": "full",
+      "home": "Aaron Nola",
+      "away": "Randy Vásquez"
+    },
+    {
+      "hasPendingPitcher": false,
+      "pitcherDataQuality": "full",
+      "home": "Connelly Early",
+      "away": "Shane Baz"
+    }
+  ],
+  "samplePicks": [
+    {
+      "confidence": 72,
+      "color": "verde"
+    },
+    {
+      "confidence": 68,
+      "color": "verde"
+    },
+    {
+      "confidence": 61.599999999999994,
+      "color": "verde"
+    },
+    {
+      "confidence": 61.599999999999994,
+      "color": "verde"
+    },
+    {
+      "confidence": 80,
+      "color": "verde"
+    }
+  ],
+  "pendingGames": 1,
+  "pendingPicks": 0
+}

@@ -1,0 +1,3 @@
+﻿NAME                  IMAGE                           COMMAND                  SERVICE      CREATED          STATUS                    PORTS
+danny-pick            aplicacionesvarias-danny-pick   "docker-entrypoint.sÔÇª"   danny-pick   25 seconds ago   Up 18 seconds             0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp
+dany-picks-postgres   postgres:16-alpine              "docker-entrypoint.sÔÇª"   postgres     25 seconds ago   Up 24 seconds (healthy)   0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
