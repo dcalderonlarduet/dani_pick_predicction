@@ -58,12 +58,19 @@ function passesMlbValueMode({ color, valueGates, evModel, edge, score, confidenc
 }
 
 function computeMlbDataQuality(flags, meta) {
-  return applyDataQualityPenalties(
+  let dq = applyDataQualityPenalties(
     computeDataQuality(flags, meta),
     MLB_THRESHOLDS.dataQualityPenalties,
     flags,
     "mlb"
   );
+  // Penalizar fuertemente si pitcher desconocido: el modelo usó prior genérico
+  if (meta?.hasPendingPitcher) {
+    dq = Math.max(0, dq - 0.25);
+  } else if (meta?.pitcherDataQuality === "partial") {
+    dq = Math.max(0, dq - 0.10);
+  }
+  return dq;
 }
 
 function logMlbGateFailures({ recommendation, game, color, valueGates, score, evModel, evRaw, dataQuality, edge }) {
@@ -213,7 +220,22 @@ function mlbDataQualityMeta(game) {
     oddsAvailable: Boolean(game?.oddsAvailable),
     sampleGames: ctx.sampleGames ?? null,
     freshnessOk: Boolean(flags.freshness_ok),
+    // Penalizar cuando algún pitcher no está confirmado.
+    // Un pitcher "Pendiente" significa que el modelo usó regressedRunMetric=4.1
+    // (prior genérico) en vez de datos reales — el EV calculado es poco fiable.
+    hasPendingPitcher: Boolean(game?.hasPendingPitcher),
+    pitcherDataQuality: game?.pitcherDataQuality || "full",
   };
+}
+
+/**
+ * Penaliza la confianza del pick cuando hay pitcher desconocido.
+ * Se llama desde computeMlbPickConfidencePenalty.
+ */
+function mlbPitcherPendingPenalty(game) {
+  if (!game?.hasPendingPitcher) return 0;
+  // Penalización fuerte: sin pitcher conocido el EV puede ser ficticio
+  return 18; // resta 18 puntos de confianza
 }
 
 function detectMlbMarketLineMovement(game, lmMarketKey, quote) {
@@ -383,6 +405,8 @@ function buildMlbNoRealOddsScoring(recommendation, game, meta, quote) {
     prob_model: Number.isFinite(probModel) ? probModel : null,
     prob_market: null,
     data_quality: computeMlbDataQuality(flags, mlbDataQualityMeta(game)),
+    pitcher_pending: game?.hasPendingPitcher || false,
+    pitcher_data_quality: game?.pitcherDataQuality || "full",
     line_movement: lm,
     value_gates: { passed: false, failures: ["sin_cuota_real"] },
     proBettable: false,
@@ -456,6 +480,8 @@ export function buildMlbProScoring(recommendation, game) {
       prob_model: probModel,
       prob_market: probMarket,
       data_quality: dataQuality,
+      pitcher_pending: game?.hasPendingPitcher || false,
+      pitcher_data_quality: game?.pitcherDataQuality || "full",
       line_movement: lm,
       value_gates: { passed: false, failures: ["rlm_contra"] },
       proBettable: false,
@@ -567,6 +593,8 @@ export function buildMlbProScoring(recommendation, game) {
     prob_model: anchor.prob,
     prob_market: probMarket,
     data_quality: dataQuality,
+    pitcher_pending: game?.hasPendingPitcher || false,
+    pitcher_data_quality: game?.pitcherDataQuality || "full",
     line_movement: lm,
     value_gates: finalValueGates,
     proBettable: finalProBettable,
@@ -615,6 +643,8 @@ export function applyMlbProScoringToRecommendation(recommendation, game) {
       line_movement: pro.line_movement,
       value_gates: pro.value_gates,
       data_quality: pro.data_quality,
+      pitcher_pending: pro.pitcher_pending,
+      pitcher_data_quality: pro.pitcher_data_quality,
       prob_model: pro.prob_model,
       prob_market: null,
       lineMovementNote: pro.lineMovementNote,
@@ -669,6 +699,8 @@ export function applyMlbProScoringToRecommendation(recommendation, game) {
     line_movement: pro.line_movement,
     value_gates: pro.value_gates,
     data_quality: pro.data_quality,
+    pitcher_pending: pro.pitcher_pending,
+    pitcher_data_quality: pro.pitcher_data_quality,
     prob_model: pro.prob_model,
     prob_market: pro.prob_market,
     lineMovementNote: pro.lineMovementNote,

@@ -13,7 +13,7 @@ import { isMlbInSlateWindow, isMlbRecommendationBettable } from "../utils/bettab
 import { isMlbGameAlreadyPlayed, isMlbGameUpcoming } from "../utils/event-status.js";
 import { shiftDateString } from "../utils/madrid-date.js";
 import { fetchJson } from "../providers/shared/http.js";
-import { loadWithCache } from "../providers/shared/resource-cache.js";
+import { loadWithCache, peekCacheEntry, clearNamespaceCache } from "../providers/shared/resource-cache.js";
 import { canonicalName, normalizeBookmakersFromTheOdds } from "../providers/shared/tennis-normalizers.js";
 import {
   loadMlbOddsMapForDates as loadMlbOddsMapFromOddsApiIoForDates,
@@ -198,7 +198,9 @@ function getMlbCachePolicy(pathname, params = {}) {
   }
 
   if (pathname === "/schedule") {
-    return { ttlMs: minutes(10), staleMs: hours(1) };
+    // TTL corto: los probable pitchers se actualizan durante el día
+    // 5 min fresh, 30 min stale — garantiza que se ven los cambios de pitchers
+    return { ttlMs: minutes(5), staleMs: minutes(30) };
   }
 
   if (/^\/people\/\d+$/.test(pathname)) {
@@ -829,19 +831,28 @@ async function loadPitcherContext(pitcherId, pitcherName, opponentTeamId, schedu
     caches.pitchers.set(pitcherId, {});
   }
   const bucket = caches.pitchers.get(pitcherId);
-  const rangeCacheKey = `${endDate}`;
+  // Incluir opponentTeamId en la clave para separar estadísticas por partido.
+  // Sin esto, el mismo pitcher en dos juegos consecutivos de la misma serie
+  // comparte el bucket y puede usar datos desactualizados del partido anterior.
+  const rangeCacheKey = `${endDate}:${opponentTeamId}`;
 
   bucket.person ||= loadPerson(pitcherId).catch(() => null);
   if (!bucket.ranges) bucket.ranges = new Map();
   if (!bucket.ranges.has(rangeCacheKey)) {
     bucket.ranges.set(rangeCacheKey, loadPitcherRecentStats(pitcherId, startDate30, endDate).catch(() => null));
   }
-  bucket.gameLogCurrent ||= loadPitcherSeasonGameLog(pitcherId, season).catch(() => null);
+  // El gameLog de temporada es estable — puede compartirse entre partidos del mismo pitcher.
+  // Solo necesitamos recargar si la temporada cambia (no ocurre en mitad de temporada).
+  const gameLogKey = `${season}`;
+  if (!bucket.gamelogs) bucket.gamelogs = new Map();
+  if (!bucket.gamelogs.has(gameLogKey)) {
+    bucket.gamelogs.set(gameLogKey, loadPitcherSeasonGameLog(pitcherId, season).catch(() => null));
+  }
 
   const [personPayload, recentRangePayload, gameLogCurrent] = await Promise.all([
     bucket.person,
     bucket.ranges.get(rangeCacheKey),
-    bucket.gameLogCurrent,
+    bucket.gamelogs.get(gameLogKey),
   ]);
 
   const recentStatLine = statLineFromPayload(recentRangePayload);
@@ -2093,6 +2104,11 @@ async function buildGameContext(rawGame, date, oddsMap, caches, hasOddsConfigure
     ? await loadPitcherContext(awayPitcherId, awayPitcherName, homeTeamRaw.id, rawGame.gameDate, caches).catch(() => createFallbackPitcher(awayPitcherId, awayPitcherName))
     : createFallbackPitcher(null, awayPitcherName);
 
+  // Marcar si algún pitcher no está confirmado — el modelo debe penalizar la confianza
+  homePitcher.isPending = !homePitcherId || homePitcherName === "Pendiente" || homePitcherName === "TBD";
+  awayPitcher.isPending = !awayPitcherId || awayPitcherName === "Pendiente" || awayPitcherName === "TBD";
+  const hasPendingPitcher = homePitcher.isPending || awayPitcher.isPending;
+
   homePitcher.status =
     homePitcherRaw?.status || feed?.gameData?.probablePitchers?.home?.status || rawGame?.status?.detailedState;
   awayPitcher.status =
@@ -2151,6 +2167,8 @@ async function buildGameContext(rawGame, date, oddsMap, caches, hasOddsConfigure
   };
 
   game.bothLineupsConfirmed = Boolean(homeTeam.lineup.confirmed && awayTeam.lineup.confirmed);
+  game.hasPendingPitcher = hasPendingPitcher;
+  game.pitcherDataQuality = hasPendingPitcher ? "pending" : isMlbStructuralDataFresh(homePitcher, awayPitcher, homeTeam, awayTeam) ? "full" : "partial";
   game.umpire = parseUmpireFromFeed(feed);
   const weather = await loadGameWeather(homeTeamRaw.id, rawGame.gameDate, park).catch(() => null);
   game.weather = weather;
@@ -2468,6 +2486,23 @@ export async function buildMlbAnalysis(date) {
       buildGameContext(rawGame, scheduleDate, oddsMap, caches, hasOddsKey)
     )
   ).filter((game) => game && isMlbGameUpcoming(game));
+
+  // Invalidar cache del schedule del día siguiente si algún partido tiene pitcher pendiente.
+  // Esto garantiza que el próximo prewarm recargue desde MLB API con los pitchers actualizados
+  // en lugar de servir el snapshot cacheado con probablePitcher = null.
+  {
+    const hasPendingNextDay = games.some((g) => g.hasPendingPitcher && g.scheduleDate === nextDay);
+    if (hasPendingNextDay) {
+      const nextDayUrl = buildMlbUrl("/schedule", {
+        sportId: 1, date: nextDay, hydrate: ["probablePitcher", "team", "venue"],
+      });
+      if (peekCacheEntry(MLB_CACHE_NAMESPACE, nextDayUrl)) {
+        // Invalida caché MLB para que el próximo análisis recargue schedule (pitchers actualizados)
+        clearNamespaceCache(MLB_CACHE_NAMESPACE);
+        console.info(`[mlb-cache] Schedule ${nextDay} expirado por pitcher(s) pendiente(s) — se recargará en el próximo análisis.`);
+      }
+    }
+  }
 
   if (games.length === 0) {
     return buildMlbUnavailableAnalysis(

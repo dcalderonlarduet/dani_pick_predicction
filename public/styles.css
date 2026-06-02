@@ -1033,6 +1033,40 @@ nav {
   animation: line-trap-pulse 2.2s ease-in-out infinite;
 }
 
+.sport-desk-game-chip--pitcher-pending {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.42);
+  color: #fde68a;
+  font-weight: 700;
+}
+
+.pitcher-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fde68a;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.pitcher-pending-badge.is-compact {
+  margin: 0;
+  padding: 2px 7px;
+  font-size: 10px;
+}
+
+.pick-card.has-pitcher-pending,
+.sport-desk-pick-card.has-pitcher-pending {
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.22);
+}
+
 @keyframes line-trap-pulse {
   0%, 100% {
     box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
@@ -6213,4 +6247,159 @@ body.modal-open {
 
 .t-metric--muted .t-metric-val {
   opacity: 0.55;
+}
+
+/* DANY PICK layout stability */
+.main {
+  width: min(1280px, calc(100% - 28px));
+}
+
+nav,
+.hero,
+.section-header,
+.section-header-main,
+.module-dock-head,
+.desk-header,
+.sport-desk-game-head-top,
+.sport-desk-pick-card-top,
+.best-pick-track-row {
+  min-width: 0;
+}
+
+.hero {
+  align-items: stretch;
+}
+
+.hero > div:first-child {
+  min-width: min(100%, 320px);
+  flex: 1 1 420px;
+}
+
+.hero-title {
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.hero-sub,
+.section-note,
+.tracker-top-copy,
+.module-dock-sub,
+.sport-desk-pick-note,
+.best-pick-pick,
+.best-pick-partido,
+.quiniela-ticket-match,
+.quiniela-ticket-why {
+  overflow-wrap: anywhere;
+}
+
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(104px, 1fr));
+  align-content: stretch;
+  flex: 1 1 340px;
+  max-width: 430px;
+}
+
+.stat-box {
+  min-width: 0;
+}
+
+.module-dock-grid {
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  min-width: 0;
+}
+
+.module-card.module-chip {
+  min-width: 0;
+}
+
+.module-chip-body,
+.sport-desk-game-team,
+.sport-desk-pick-card-body,
+.sport-desk-pick-selection,
+.t-pick-title-text,
+.best-pick-body {
+  min-width: 0;
+}
+
+.sport-desk-pick-selection,
+.t-pick-sport-title,
+.sport-desk-game-team-name {
+  overflow-wrap: anywhere;
+  letter-spacing: 0;
+}
+
+.sport-desk-pick-card-body {
+  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+}
+
+.sport-desk-pick-card-side {
+  min-width: 104px;
+}
+
+.best-pick-banner {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+@media (max-width: 820px) {
+  nav {
+    height: auto;
+    min-height: calc(58px + env(safe-area-inset-top));
+    flex-wrap: wrap;
+    align-items: center;
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-bottom: 8px;
+  }
+
+  .nav-status-row {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .hero {
+    padding: 20px;
+  }
+
+  .stats-row {
+    max-width: none;
+    width: 100%;
+  }
+
+  .module-dock-head,
+  .section-header,
+  .tracker-top-head {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .main {
+    width: min(100% - 18px, 1280px);
+  }
+
+  .hero-title {
+    font-size: 32px;
+    line-height: 1.08;
+  }
+
+  .stats-row {
+    grid-template-columns: 1fr;
+  }
+
+  .module-dock-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sport-desk-pick-card-body,
+  .best-pick-banner {
+    grid-template-columns: 1fr;
+  }
+
+  .sport-desk-pick-card-side {
+    width: 100%;
+    min-width: 0;
+    align-items: flex-start;
+    flex-direction: row;
+    justify-content: space-between;
+  }
 }

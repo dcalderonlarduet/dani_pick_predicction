@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
-<title>DANY PICKS | Vamos hacer una platica 💶 😎</title>
+<title>DANY PICKS | Vamos hacer una platica</title>
 <link rel="icon" type="image/svg+xml" href="/favicon-d.svg" />
 <link rel="stylesheet" href="/styles.css?v=mobile-fix-2" />
 <script src="/line-trap-ui.js"></script>
@@ -15,7 +15,7 @@
     <div class="logo-icon">D</div>
     <div>
       <div class="logo-name">DANY PICKS</div>
-      <div class="logo-sub">Vamos hacer una platica 💶 😎</div>
+      <div class="logo-sub">Vamos hacer una platica</div>
     </div>
   </div>
   <div class="nav-clock">
@@ -24,12 +24,12 @@
     <span>Madrid</span>
   </div>
   <div class="nav-status-row">
-    <div class="nav-picks" id="nav-picks-count">Cargando módulo...</div>
+    <div class="nav-picks" id="nav-picks-count">Cargando modulo...</div>
     <div class="nav-live-pill is-idle" id="public-splits-banner" role="status" aria-live="polite" title="Tickets / handle">
       <span class="nav-live-pill-k">TIX</span>
       <span class="nav-live-pill-v" id="public-splits-copy">…</span>
     </div>
-    <div class="nav-live-pill is-idle" id="module-cache-banner" role="status" aria-live="polite" title="Caché del módulo">
+    <div class="nav-live-pill is-idle" id="module-cache-banner" role="status" aria-live="polite" title="Cache del modulo">
       <span class="nav-live-pill-k">CACHE</span>
       <span class="nav-live-pill-v" id="module-cache-copy">…</span>
     </div>
@@ -50,7 +50,7 @@
     </div>
   </section>
 
-  <section class="module-dock-section" id="module-dock" aria-label="Selección de deporte">
+  <section class="module-dock-section" id="module-dock" aria-label="Seleccion de deporte">
     <div class="module-dock-head">
       <div>
         <div class="module-dock-title">MÓDULOS</div>
@@ -333,7 +333,7 @@
     <div class="status-item"><span class="dot dot-on"></span><span class="status-lbl">Bet365</span></div>
     <div class="status-item"><span class="dot dot-on"></span><span class="status-lbl">Winamax FR</span></div>
     <div class="status-item"><span class="dot dot-on"></span><span class="status-lbl">Madrid TZ</span></div>
-    <span class="footer-note" id="footer-note">Carga por módulo · Cache 10 min</span>
+    <span class="footer-note" id="footer-note">Carga por modulo - Cache 10 min</span>
     <span class="footer-version" id="footer-version">v2026.05.26-r2</span>
   </section>
 </main>
@@ -1636,6 +1636,9 @@ function normalizePick(raw, sportId, lookup) {
         const rationaleText = String(raw?.rationale || "");
         if (ctx && !rationaleText.includes(ctx.slice(0, 40))) parts.push(ctx);
       }
+      if (sportId === "mlb" && (raw?.pitcher_pending || raw?.hasPendingPitcher)) {
+        parts.push("Abridor no confirmado: menor fiabilidad del modelo hasta anuncio oficial.");
+      }
       if (downgradedRunline) {
         parts.push("Handicap agresivo: se muestra como alternativa hasta tener EV propio de cobertura.");
       }
@@ -1653,6 +1656,8 @@ function normalizePick(raw, sportId, lookup) {
     eventContext: event?.raw || null,
     isMoneylinePick: sportId === "mlb" && isMlbMoneylineRaw(raw, pick),
     downgradedRunline,
+    pitcherPending: Boolean(raw?.pitcher_pending || raw?.hasPendingPitcher),
+    pitcherDataQuality: raw?.pitcher_data_quality || raw?.pitcherDataQuality || null,
     bettable: Boolean(raw?.bettable || raw?.readyToBet || raw?.valueBettable || raw?.valueModeApplied || raw?.proBettable),
     readyToBet: Boolean(raw?.readyToBet || raw?.bettable || raw?.valueBettable || raw?.valueModeApplied || raw?.proBettable),
     valueModeApplied: Boolean(raw?.valueModeApplied),
@@ -2141,6 +2146,22 @@ function renderPickPricingBadge(pick) {
   return `<div class="pick-pricing-row"><span class="pick-pricing-badge ${pricing.className}">${esc(pricing.cardLabel)}</span></div>`;
 }
 
+function pickHasPendingPitcher(pick) {
+  return Boolean(
+    pick?.pitcherPending ||
+    pick?.raw?.pitcher_pending ||
+    pick?.raw?.hasPendingPitcher
+  );
+}
+
+function renderPitcherPendingBadge(pick, { compact = false } = {}) {
+  if (!pickHasPendingPitcher(pick)) return "";
+  const quality = pick?.pitcherDataQuality || pick?.raw?.pitcher_data_quality || "pending";
+  const label = quality === "partial" ? "Pitcher parcial" : "Pitcher TBD";
+  const title = "Abridor no confirmado: el modelo penaliza data quality y la fiabilidad del EV es menor.";
+  return `<span class="pitcher-pending-badge${compact ? " is-compact" : ""}" title="${esc(title)}">⚠ ${esc(label)}</span>`;
+}
+
 function renderPickDetailModalContent(pick) {
   const isAlt = pick.estado === "amarillo";
   const factors = collectPickFactors(pick);
@@ -2585,10 +2606,11 @@ function renderDeskPickCard(item, sportId) {
   const pickHtml = sportId === "mlb" ? renderMlbPickLabelHtml(item.pick) : esc(item.pick);
 
   return `
-    <article class="sport-desk-pick-card sport-desk-pick-card--${tone}${item.isStrongest ? " is-strongest" : ""}${item.isWeakest ? " is-weakest" : ""}${item.lineTrapActive ? " has-line-trap" : ""}">
+    <article class="sport-desk-pick-card sport-desk-pick-card--${tone}${item.isStrongest ? " is-strongest" : ""}${item.isWeakest ? " is-weakest" : ""}${item.lineTrapActive ? " has-line-trap" : ""}${pickHasPendingPitcher(item) ? " has-pitcher-pending" : ""}">
       <div class="sport-desk-pick-card-top">
         <span class="sport-desk-pick-market">${esc(item.marketLabel || item.mercado || "Mercado")}</span>
         <span class="sport-desk-pick-tone-badge">${esc(getDeskPickToneLabel(item))}</span>
+        ${renderPitcherPendingBadge(item, { compact: true })}
         ${item.lineTrapActive ? renderLineTrapBlock(item.raw || item, { compact: true }) : ""}
       </div>
       <div class="sport-desk-pick-card-body">
@@ -2671,6 +2693,7 @@ function renderMlbDeskGameHeader(event) {
         ${event.leanCount ? `<span class="sport-desk-game-chip sport-desk-game-chip--alt">${event.leanCount} alternativa</span>` : ""}
         ${event.neutralCount ? `<span class="sport-desk-game-chip sport-desk-game-chip--low">${event.neutralCount} sin valor</span>` : ""}
         ${gameHasLineTrap(game) ? `<span class="sport-desk-game-chip sport-desk-game-chip--trap" title="Mucha gente apuesta al mismo lado y la cuota empeoró">🪤 TRAMPA</span>` : ""}
+        ${game.hasPendingPitcher ? `<span class="sport-desk-game-chip sport-desk-game-chip--pitcher-pending" title="Probable pitcher pendiente de confirmación">⚠ PITCHER TBD</span>` : ""}
       </div>
     </header>
   `;
@@ -7317,45 +7340,6 @@ async function saveCfg() {
   await loadStatsPanel();
 }
 
-function renderPickCard(pick, index) {
-  const medals = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
-  const isAlt = pick.estado === "amarillo";
-  const cuotaText = pick.cuota != null ? pick.cuota.toFixed(2) : "--";
-  const casaCls = pick.casa === "Winamax" ? "casa-wmx" : "casa-b365";
-
-  return `
-    <article class="pick-card ${isAlt ? "pick-amarillo" : "pick-verde"}">
-      ${index < 3 ? `<span class="pick-rank">${medals[index]}</span>` : ""}
-      <div class="pick-sport-row">
-        <span class="pick-icon">${esc(pick.icono)}</span>
-        <div>
-          <div class="pick-deporte">${renderTimeLine(pick)}</div>
-          <div class="pick-partido">${esc(pick.partido)}</div>
-        </div>
-      </div>
-      <div class="pick-nombre">${esc(pick.pick)}</div>
-      ${pick.senalDoble ? '<div style="margin-bottom:7px"><span class="senal-doble">Senal doble</span></div>' : ""}
-      <div class="pick-bottom">
-        <div>
-          <div class="ev-badge ${isAlt ? "ev-amarillo" : "ev-verde"}">EV ${esc(pick.ev)}</div>
-          <div class="pick-conf">${Math.round(pick.confianza)}% confianza${isAlt ? " | alternativa" : ""}</div>
-          ${renderPickPricingBadge(pick)}
-          ${pick.tarjetasInfo ? `<div class="cards-badge" style="margin-top:5px">Tarjetas ${esc(pick.tarjetasInfo.linea != null ? "linea " + pick.tarjetasInfo.linea : "")} ${esc(pick.tarjetasInfo.betSide)}</div>` : ""}
-        </div>
-        <div class="pick-cuota">
-          ${renderBookOddsRow(pick.raw || {}, "compact")}
-        </div>
-      </div>
-      ${renderStakeBox(pick.evNum, pick.cuota)}
-      <div class="pick-actions">
-        <button class="pick-detail-btn" type="button" data-pick-detail-open="${esc(pick.id)}">Detalle</button>
-        <button class="pick-track-btn${tracked ? " is-tracked" : ""}" type="button" data-track-pick-id="${esc(pick.id)}">${tracked ? "✓ Añadido" : "+ Añadir a mi tracker"}</button>
-        ${tracked ? `<button class="pick-track-btn remove" type="button" data-untrack-pick-id="${esc(pick.id)}">Eliminar</button>` : ""}
-      </div>
-    </article>
-  `;
-}
-
 function renderExpandedMatch(event, moduleId) {
   const trackableCount = getTrackableEventPicks(event, moduleId).length;
   const trackedCount = getTrackedEventRecords(event, moduleId).length;
@@ -7386,55 +7370,6 @@ function renderExpandedMatch(event, moduleId) {
         </button>
       </div>
     </div>
-  `;
-}
-
-function renderPickCard(pick, index) {
-  const medals = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
-  const isAlt = pick.estado === "amarillo";
-  const cuotaText = pick.cuota != null ? pick.cuota.toFixed(2) : "--";
-  const casaCls = pick.casa === "Winamax" ? "casa-wmx" : "casa-b365";
-  const trackedState = getTrackedStateForEntry(pick);
-
-  return `
-    <article class="pick-card ${isAlt ? "pick-amarillo" : "pick-verde"}">
-      ${index < 3 ? `<span class="pick-rank">${medals[index]}</span>` : ""}
-      <div class="pick-sport-row">
-        <span class="pick-icon">${esc(pick.icono)}</span>
-        <div>
-          <div class="pick-deporte">${renderTimeLine(pick)}</div>
-          <div class="pick-partido">${esc(pick.partido)}</div>
-        </div>
-      </div>
-      <div class="pick-nombre">${esc(pick.pick)}</div>
-      ${pick.senalDoble ? '<div style="margin-bottom:7px"><span class="senal-doble">Senal doble</span></div>' : ""}
-      <div class="pick-bottom">
-        <div>
-          <div class="ev-badge ${isAlt ? "ev-amarillo" : "ev-verde"}">EV ${esc(pick.ev)}</div>
-          <div class="pick-conf">${Math.round(pick.confianza)}% confianza${isAlt ? " | alternativa" : ""}</div>
-          ${renderPickPricingBadge(pick)}
-          ${pick.tarjetasInfo ? `<div class="cards-badge" style="margin-top:5px">Tarjetas ${esc(pick.tarjetasInfo.linea != null ? "linea " + pick.tarjetasInfo.linea : "")} ${esc(pick.tarjetasInfo.betSide)}</div>` : ""}
-        </div>
-        <div class="pick-cuota">
-          ${renderBookOddsRow(pick.raw || {}, "compact")}
-        </div>
-      </div>
-      ${renderStakeBox(pick.evNum, pick.cuota)}
-      <div class="pick-actions">
-        <button class="pick-detail-btn" type="button" data-pick-detail-open="${esc(pick.id)}">Detalle</button>
-        <button
-          class="pick-track-btn${trackedState.tracked ? " is-tracked" : ""}${!trackedState.canAdd && !trackedState.tracked ? " is-locked" : ""}"
-          type="button"
-          data-track-pick-id="${esc(pick.id)}"
-          ${trackedState.canAdd ? "" : "disabled"}
-        >${trackedState.tracked ? "Añadido" : trackedState.started ? "Ya inició" : "+ Añadir a mi tracker"}</button>
-        ${trackedState.tracked
-          ? trackedState.canRemove
-            ? `<button class="pick-track-btn remove" type="button" data-untrack-pick-id="${esc(pick.id)}">Eliminar</button>`
-            : `<button class="pick-track-btn is-locked" type="button" disabled>${esc(trackedState.reason || "Bloqueado")}</button>`
-          : ""}
-      </div>
-    </article>
   `;
 }
 
@@ -7486,8 +7421,8 @@ function renderPickCard(pick, index) {
   const rankLabels = ["#1", "#2", "#3"];
   const isAlt = pick.estado === "amarillo";
   const isLean = pick.estado !== "verde" && pick.estado !== "amarillo";
-  const cuotaText = pick.cuota != null ? pick.cuota.toFixed(2) : "--";
-  const casaCls = pick.casa === "Winamax" ? "casa-wmx" : "casa-b365";
+  const isMl = pick.sportId === "mlb" && isMlbMoneylinePick(pick);
+  const pickLabelHtml = isMl ? renderMlbPickLabelHtml(pick.pick) : esc(pick.pick);
   const trackedState = getTrackedStateForEntry(pick);
   const cardClass = isLean ? "pick-lean" : (isAlt ? "pick-amarillo" : "pick-verde");
   const statusText = isLean ? "SIN VALOR" : (isAlt ? "ALTERNATIVA" : "✓ VERDE");
@@ -7515,7 +7450,7 @@ function renderPickCard(pick, index) {
         ${needsActionSpacer ? '<span class="pick-action-spacer" aria-hidden="true"></span>' : ""}`;
 
   return `
-    <article class="pick-card ${cardClass}${isTopPick ? " is-top-pick" : ""}${isBestPick ? " is-best-pick" : ""}${pick.lineTrapActive ? " has-line-trap" : ""}">
+    <article class="pick-card ${cardClass}${isTopPick ? " is-top-pick" : ""}${isBestPick ? " is-best-pick" : ""}${pick.lineTrapActive ? " has-line-trap" : ""}${pickHasPendingPitcher(pick) ? " has-pitcher-pending" : ""}${isMl ? " is-moneyline-pick" : ""}">
       <span class="pick-rank">${esc(rankLabel)}</span>
       <div class="pick-topbar" style="margin-top:10px">
         <div class="pick-sport-tag">
@@ -7525,7 +7460,8 @@ function renderPickCard(pick, index) {
         <span class="pick-state-badge ${statusClass}">${esc(statusText)}</span>
       </div>
       <div class="pick-partido">${esc(pick.partido)}</div>
-      <div class="pick-nombre">${esc(pick.pick)}</div>
+      <div class="pick-nombre${isMl ? " is-ml-pick" : ""}">${pickLabelHtml}</div>
+      ${renderPitcherPendingBadge(pick)}
       ${isBestPick ? '<div class="alta-confianza-badge is-mejor-pick">MEJOR PICK</div>' : ""}
       ${isTopPick && !isBestPick ? '<div class="alta-confianza-badge">TOP PICK</div>' : ""}
       ${pick.senalDoble ? '<div class="senal-doble-badge">⚡ SEÑAL DOBLE · EV + mercado</div>' : ""}
@@ -7785,3 +7721,4 @@ if (typeof installDanyPicksUI === "function") installDanyPicksUI();
 
 </body>
 </html>
+
