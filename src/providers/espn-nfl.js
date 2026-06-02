@@ -10,10 +10,11 @@ import {
   fetchScoreboard,
   leagueAverages,
   matchScoreboardEvent,
+  parseEspnH2hFullTotal,
   parseEspnH2h1h,
   parseEspnRecentForm,
   parseEspnSeasonTeamForm,
-  parseEspnTeamRecentTotals,
+  parseEspnTeamRecentScoring,
   parseInjuryFlags,
 } from "./shared/espn-pro.js";
 import { loadApiSportsNflGameInsight } from "./api-sports-american-football.js";
@@ -112,8 +113,24 @@ async function buildEspnNflContext({ date, home, away, eventId, events }) {
     parseEspnRecentForm(summary, "away", "nfl") ||
     buildFormFromSummary(summary, "away", "nfl");
 
-  homeForm.recentTotals = parseEspnTeamRecentTotals(homeSchedule, teams.homeId, { limit: 15, sport: "nfl" });
-  awayForm.recentTotals = parseEspnTeamRecentTotals(awaySchedule, teams.awayId, { limit: 15, sport: "nfl" });
+  const homeRecentScoring = parseEspnTeamRecentScoring(homeSchedule, teams.homeId, { limit: 8 });
+  const awayRecentScoring = parseEspnTeamRecentScoring(awaySchedule, teams.awayId, { limit: 8 });
+  homeForm.recentTotals = homeRecentScoring.pointsFor;
+  homeForm.recentScores = homeRecentScoring.pointsFor;
+  homeForm.recentGameTotals = homeRecentScoring.totals;
+  homeForm.recentPointsAllowed = homeRecentScoring.pointsAgainst;
+  homeForm.ptsAllowedPerGame = Number.isFinite(homeForm.ptsAllowedPerGame)
+    ? homeForm.ptsAllowedPerGame
+    : homeRecentScoring.avgAgainst;
+  homeForm.gamesPlayed = homeForm.gamesPlayed ?? homeRecentScoring.sample;
+  awayForm.recentTotals = awayRecentScoring.pointsFor;
+  awayForm.recentScores = awayRecentScoring.pointsFor;
+  awayForm.recentGameTotals = awayRecentScoring.totals;
+  awayForm.recentPointsAllowed = awayRecentScoring.pointsAgainst;
+  awayForm.ptsAllowedPerGame = Number.isFinite(awayForm.ptsAllowedPerGame)
+    ? awayForm.ptsAllowedPerGame
+    : awayRecentScoring.avgAgainst;
+  awayForm.gamesPlayed = awayForm.gamesPlayed ?? awayRecentScoring.sample;
 
   const weather = summary?.gameInfo?.weather || summary?.weather;
   let clima_factor = 1;
@@ -129,7 +146,8 @@ async function buildEspnNflContext({ date, home, away, eventId, events }) {
   const qbOutHome = homeInjury.injuryDetails.some((d) => String(d.position || "").includes("QB"));
   const qbOutAway = awayInjury.injuryDetails.some((d) => String(d.position || "").includes("QB"));
 
-  const h2h1h = parseEspnH2h1h(summary, "nfl") ?? avg.pts1h * 2;
+  const h2h1h = parseEspnH2h1h(summary, "nfl") ?? avg.pts1h;
+  const h2hFullTotal = parseEspnH2hFullTotal(summary);
 
   return {
     found: true,
@@ -163,6 +181,9 @@ async function buildEspnNflContext({ date, home, away, eventId, events }) {
       ...parseTeamInjuries(summary, teams.awayId),
     ],
     hay_noticia_lesion: injuryInfo.hay_noticia_lesion,
+    h2h: {
+      averageTotal: h2hFullTotal,
+    },
     h2h_1h: h2h1h,
     flags: {
       stats_espn_disponibles: Boolean(summary?.boxscore || homeSeasonStats || awaySeasonStats),
@@ -177,8 +198,7 @@ async function buildEspnNflContext({ date, home, away, eventId, events }) {
 export async function buildNflGameContext(params) {
   const espnCtx = await buildEspnNflContext(params);
   const espnStatsOk =
-    espnCtx?.source_log?.season_stats === "espn" ||
-    espnCtx?.home?.form?.source === "espn-season-stats" ||
+    espnCtx?.home?.form?.source === "espn-season-stats" &&
     espnCtx?.away?.form?.source === "espn-season-stats";
 
   if (espnStatsOk && espnCtx?.found) return espnCtx;

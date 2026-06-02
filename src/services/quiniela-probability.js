@@ -35,12 +35,78 @@ export function impliedProbsFromMlOdds(mlOdds) {
   return normalizeProbs(raw.p1, raw.px, raw.p2);
 }
 
+function readNumber(...values) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Number.parseFloat(value.replace("%", "").replace(",", ".").trim());
+      if (Number.isFinite(parsed)) return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
+    }
+  }
+  return null;
+}
+
+function poissonPmf(k, lambda) {
+  if (k < 0 || !Number.isFinite(lambda) || lambda <= 0) return 0;
+  let probability = Math.exp(-lambda);
+  for (let i = 1; i <= k; i += 1) {
+    probability *= lambda / i;
+  }
+  return probability;
+}
+
+function readGoalValue(...values) {
+  const value = readNumber(...values);
+  return Number.isFinite(value) && value >= 0 && value <= 8 ? value : null;
+}
+
+function fallbackPoissonProbsFromGoals(ctx = {}) {
+  const homeLambda = readGoalValue(ctx.lambda_home) ?? (
+    readGoalValue(ctx.home_goals_for, ctx.goles_favor_local) != null || readGoalValue(ctx.away_goals_against) != null
+      ? ((readGoalValue(ctx.home_goals_for, ctx.goles_favor_local) ?? 1.25) + (readGoalValue(ctx.away_goals_against) ?? 1.25)) / 2
+      : null
+  );
+  const awayLambda = readGoalValue(ctx.lambda_away) ?? (
+    readGoalValue(ctx.away_goals_for, ctx.goles_favor_away) != null || readGoalValue(ctx.home_goals_against) != null
+      ? ((readGoalValue(ctx.away_goals_for, ctx.goles_favor_away) ?? 1.05) + (readGoalValue(ctx.home_goals_against) ?? 1.05)) / 2
+      : null
+  );
+  if (!Number.isFinite(homeLambda) || !Number.isFinite(awayLambda)) return null;
+
+  let p1 = 0;
+  let px = 0;
+  let p2 = 0;
+  for (let h = 0; h <= 7; h += 1) {
+    for (let a = 0; a <= 7; a += 1) {
+      const p = poissonPmf(h, homeLambda) * poissonPmf(a, awayLambda);
+      if (h > a) p1 += p;
+      else if (h === a) px += p;
+      else p2 += p;
+    }
+  }
+  return normalizeProbs(p1, px, p2);
+}
+
+function applyAttackStrengthAdjust(probs, ctx = {}) {
+  const homeAttack = readNumber(ctx.home_attack_strength, ctx.model_home_attack_strength);
+  const awayAttack = readNumber(ctx.away_attack_strength, ctx.model_away_attack_strength);
+  if (!probs || !Number.isFinite(homeAttack) || !Number.isFinite(awayAttack)) return probs;
+  const delta = clamp((homeAttack - awayAttack) * 0.08, -0.04, 0.04);
+  return normalizeProbs(
+    clamp(probs.p1 + delta, 0.05, 0.92),
+    probs.px,
+    clamp(probs.p2 - delta, 0.05, 0.92)
+  ) || probs;
+}
+
 export function getModelProbsFromBundle(bundle = {}) {
   const ctx = bundle.footballCtx || {};
   const mm = bundle.matchModel || {};
 
   const fromCtx = normalizeProbs(ctx.model_home_prob, ctx.model_draw_prob, ctx.model_away_prob);
-  if (fromCtx) return { ...fromCtx, source: ctx.source || bundle.dataSource || "football-ctx" };
+  if (fromCtx) {
+    return { ...applyAttackStrengthAdjust(fromCtx, ctx), source: ctx.source || bundle.dataSource || "football-ctx" };
+  }
 
   const p1 = mm.model_home_prob;
   const p2 = mm.model_away_prob;
@@ -48,29 +114,48 @@ export function getModelProbsFromBundle(bundle = {}) {
   if (p1 != null && p2 != null) {
     const pxEff = px != null ? px : clamp(1 - p1 - p2, 0.10, 0.35);
     const normalized = normalizeProbs(p1, pxEff, p2);
-    if (normalized) return { ...normalized, source: bundle.dataSource || "match-model" };
+    if (normalized) return { ...applyAttackStrengthAdjust(normalized, ctx), source: bundle.dataSource || "match-model" };
   }
+
+  const fallback = fallbackPoissonProbsFromGoals(ctx);
+  if (fallback) return { ...applyAttackStrengthAdjust(fallback, ctx), source: `${ctx.source || bundle.dataSource || "football-ctx"}:poisson-fallback` };
   return null;
 }
 
 export function computeDataQuality(bundle = {}) {
   const hasModel = Boolean(getModelProbsFromBundle(bundle));
   const hasMarket = Boolean(impliedProbsFromMlOdds(bundle.mlOdds));
-  const src = String(bundle.footballCtx?.source || bundle.dataSource || "").toLowerCase();
+  const ctx = bundle.footballCtx || {};
+  const src = String(ctx.source || bundle.dataSource || "").toLowerCase();
+  const isPriors = bundle.isPlaceholder || src.includes("priors") || src === "no-data";
+  const hasGoalData = Number.isFinite(readGoalValue(ctx.home_goals_for, ctx.goles_favor_local)) && Number.isFinite(readGoalValue(ctx.away_goals_for, ctx.goles_favor_away));
+  const hasDefData = Number.isFinite(readGoalValue(ctx.home_goals_against)) && Number.isFinite(readGoalValue(ctx.away_goals_against));
+  const hasFormData =
+    (Array.isArray(ctx.forma) && ctx.forma.length > 0) ||
+    (Array.isArray(ctx.home_recent_matches) && ctx.home_recent_matches.length > 0) ||
+    (Array.isArray(ctx.away_recent_matches) && ctx.away_recent_matches.length > 0);
+  const hasAtkStr = Number.isFinite(readNumber(ctx.home_attack_strength, ctx.model_home_attack_strength)) && Number.isFinite(readNumber(ctx.away_attack_strength, ctx.model_away_attack_strength));
+  const hasH2h = [ctx.h2h_home_win_rate, ctx.h2h_draw_rate, ctx.h2h_away_win_rate, ctx.h2h_over25_rate, ctx.h2h_btts_rate].some((value) => Number.isFinite(readNumber(value)));
   const lineupsOk = Boolean(
-    bundle.footballCtx?.lineup_confirmed ||
+    ctx.lineup_confirmed ||
     bundle.lineups?.bothConfirmed ||
-    (bundle.footballCtx?.home_lineup_confirmed && bundle.footballCtx?.away_lineup_confirmed)
+    (ctx.home_lineup_confirmed && ctx.away_lineup_confirmed)
   );
-  const injuries = Number(bundle.footballCtx?.injuries ?? bundle.injuries ?? 0);
+  const injuries = Number(ctx.injuries ?? bundle.injuries ?? 0);
 
   let score = 0;
   if (hasModel) score += 0.35;
   if (hasMarket) score += 0.25;
   if (/espn|api-sports/.test(src)) score += 0.15;
+  if (hasGoalData) score += 0.08;
+  if (hasDefData) score += 0.06;
+  if (hasFormData) score += 0.07;
+  if (hasAtkStr) score += 0.06;
+  if (hasH2h) score += 0.05;
   if (lineupsOk) score += 0.10;
   if (!bundle.isPlaceholder) score += 0.10;
   if (injuries <= 2) score += 0.05;
+  if (isPriors) score *= 0.45;
   return round(clamp(score, 0, 1), 2);
 }
 
@@ -83,11 +168,41 @@ function maxSignDisagreement(model, market) {
   );
 }
 
-function applyOddsMoveAdjust(probs, oddsDrop) {
-  if (!probs || !oddsDrop?.betSide || Number(oddsDrop.drop12h || 0) < 8) return probs;
+function recentFormRatio(entries = []) {
+  const usable = entries.slice(0, 6)
+    .map((entry) => String(typeof entry === "string" ? entry : entry?.result || "").toUpperCase())
+    .filter((value) => value === "W" || value === "D" || value === "L");
+  if (!usable.length) return null;
+  let points = 0;
+  let max = 0;
+  usable.forEach((result, index) => {
+    const weight = 0.8 ** index;
+    points += weight * (result === "W" ? 3 : result === "D" ? 1 : 0);
+    max += weight * 3;
+  });
+  return max > 0 ? points / max : null;
+}
+
+function applyRecentFormAdjust(probs, bundle = {}) {
+  const ctx = bundle.footballCtx || {};
+  const homeForm = recentFormRatio(ctx.home_recent_matches || ctx.home_forma || ctx.forma || []);
+  const awayForm = recentFormRatio(ctx.away_recent_matches || ctx.away_forma || []);
+  if (!Number.isFinite(homeForm) || !Number.isFinite(awayForm)) return probs;
+  const delta = clamp((homeForm - awayForm) * 0.08, -0.04, 0.04);
+  return normalizeProbs(
+    clamp(probs.p1 + delta, 0.05, 0.92),
+    probs.px,
+    clamp(probs.p2 - delta, 0.05, 0.92)
+  ) || probs;
+}
+
+function applyOddsMoveAdjust(probs, oddsDrop, bundle = {}) {
+  if (!probs) return probs;
+  let adjusted = applyRecentFormAdjust(probs, bundle);
+  if (!oddsDrop?.betSide || Number(oddsDrop.drop12h || 0) < 8) return adjusted;
   const side = String(oddsDrop.betSide).toLowerCase();
   const boost = 0.015;
-  const adjusted = { ...probs };
+  adjusted = { ...adjusted };
   if (side === "home") adjusted.p1 = clamp(adjusted.p1 + boost, 0.05, 0.92);
   else if (side === "draw") adjusted.px = clamp(adjusted.px + boost, 0.05, 0.92);
   else if (side === "away") adjusted.p2 = clamp(adjusted.p2 + boost, 0.05, 0.92);
@@ -180,7 +295,7 @@ export function buildQuinielaFinalProbs(bundle = {}) {
   }
 
   if (!model && market) {
-    let probs = applyOddsMoveAdjust(market, bundle.oddsDrop);
+    let probs = applyOddsMoveAdjust(market, bundle.oddsDrop, bundle);
     const lmAdjust = applyLineMovementToQuiniela(probs, bundle);
     probs = lmAdjust.probs;
     return {
@@ -201,7 +316,7 @@ export function buildQuinielaFinalProbs(bundle = {}) {
   }
 
   if (model && !market) {
-    let probs = applyOddsMoveAdjust(model, bundle.oddsDrop);
+    let probs = applyOddsMoveAdjust(model, bundle.oddsDrop, bundle);
     const lmAdjust = applyLineMovementToQuiniela(probs, bundle);
     probs = lmAdjust.probs;
     return {
@@ -238,7 +353,7 @@ export function buildQuinielaFinalProbs(bundle = {}) {
     wModel * model.px + wMarket * market.px,
     wModel * model.p2 + wMarket * market.p2
   );
-  probs = applyOddsMoveAdjust(probs, bundle.oddsDrop);
+  probs = applyOddsMoveAdjust(probs, bundle.oddsDrop, bundle);
   const lmAdjust = applyLineMovementToQuiniela(probs, bundle);
   probs = lmAdjust.probs;
 

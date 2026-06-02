@@ -50,6 +50,7 @@ export function mergeProGameContext(espnCtx, apiSportsCtx) {
     source_log,
     home,
     away,
+    h2h: espnCtx?.h2h || apiSportsCtx?.h2h || null,
     h2h_1h: espnCtx?.h2h_1h || apiSportsCtx?.h2h_1h,
     clima_factor: espnCtx?.clima_factor ?? apiSportsCtx?.clima_factor ?? 1,
     flags,

@@ -23,7 +23,8 @@ Documento de handoff para continuar el proyecto sin depender del historial del c
   - Excluye `.env`, `.env.*`, `node_modules/`, estados runtime, logs, ZIPs, imagenes generadas, binarios locales y `scripts/cloudflared/`.
   - Excluye snapshots locales mutables: `src/data/picks-history.json`, `src/data/quiniela-state.json`, `src/data/community/public-splits.snapshot.json`.
   - Excluye scripts temporales de parche: `scripts/_*`, `scripts/patch-*.js`, `scripts/fix-*.js`.
-- `README.md` actualizado para describir el proyecto actual como DANY PICKS multi-deporte, no como Tennis Oracle legacy.
+- `README.md` actualizado para describir el proyecto actual como DANY PICKS multi-deporte, no como el nombre legacy anterior.
+- 2026-06-02: nombre operativo Docker/package actualizado a `danny-pick`.
 - Politica: no pegar tokens de GitHub ni claves de providers en el chat; usar autenticacion local de Git/GitHub.
 
 ---
@@ -92,12 +93,12 @@ Documento de handoff para continuar el proyecto sin depender del historial del c
   - `collectPicks()` usa `data.picks` como shortlist canonico para MLB/NBA/WNBA/NFL y Futbol; `modelPicks` solo queda como fallback legacy si `data.picks` no existe/no trae entradas.
   - Las listas principales ya no promocionan lecturas internas de `games[].recommendations` ni `partidos[].picks` como picks recomendados.
 - Futbol `src/services/football-analyzer.js`:
-  - `FOOTBALL_VALUE_CONF_MIN` queda limitado por `getMinRecommendationConfidence("football")`; aunque `.env` ponga 45, el suelo real de recomendacion es 55.
+  - `FOOTBALL_VALUE_CONF_MIN` queda limitado por `getMinRecommendationConfidence("football")`; el suelo real actual de recomendacion es 52.
   - `adaptPickForUi()` no marca `readyToBet/bettable/safeForCombo` si la confianza no supera el minimo deportivo.
 - UI `public/styles.css`:
   - Nuevas clases `.best-pick-edge.edge--alto|medio|bajo`.
 - Despliegue:
-  - Docker Compose reconstruido y contenedor `tennis-oracle` recreado tras los cambios de backend.
+  - Docker Compose reconstruido y contenedor `danny-pick` recreado tras los cambios de backend.
   - Confirmado dentro del contenedor: `elitePitcherMultiplier`, `applyPushRiskAdjustment`, `MIN_CONF_POR_DEPORTE`, `resolveWnbaBookmaker` y `FOOTBALL_RECOMMENDATION_CONF_MIN`.
 - Auditoria actual de picks tras deploy:
   - MLB API entrega 6 picks canonicos; UI principal muestra 4 picks con valor despues de filtrar conflicto confianza/edge y shortlist estricto.
@@ -124,7 +125,7 @@ Documento de handoff para continuar el proyecto sin depender del historial del c
   - Odds-API.io esta temporalmente en 429 (`100 requests/hour`); mientras dure, MLB/WNBA/NBA/NFL/Futbol pueden mostrar 0 picks si no hay snapshot con cuotas.
   - La UI muestra el retry para modulos de cuotas, pero Quiniela queda aislada del badge `RL`: sigue mostrando Jornada 66, `EN VENTA`, `Stats 0/14`, `Resultados 0/14`.
 - Despliegue/verificacion:
-  - Docker Compose reconstruido y `tennis-oracle` recreado.
+  - Docker Compose reconstruido y `danny-pick` recreado.
   - Checks: `node --check` MLB/WNBA policies/providers e inline scripts de `public/index.html`.
   - Browser: `Dodgers -1.5` no aparece; `CON VALOR - TOP` no aparece; Quiniela no muestra rate limit propio.
 
@@ -1044,7 +1045,7 @@ Sin match correcto -> cuotas vacias -> EV=0 -> `sin_valor`. Critico para MLB/fut
 - `public/dany-picks-render.js`: no renderiza tarjetas de bookings sin arbitro (guard extra).
 
 ### Despliegue
-- Tras cambiar `.env` Telegram: `docker compose up -d --force-recreate tennis-oracle` (o `--build` si cambia codigo del notifier).
+- Tras cambiar `.env` Telegram: `docker compose up -d --force-recreate danny-pick` (o `--build` si cambia codigo del notifier).
 
 ---
 
@@ -1264,3 +1265,104 @@ Actualizar este archivo si cambia:
     - MLB: datos propios de MLB, sin `VPL/Melbourne/Youth`.
     - NBA/WNBA/NFL: scoreboards ESPN de liga cerrada, sin `VPL/Melbourne/Youth`.
   - Browser `http://localhost:3000/`: Futbol muestra `Sin partidos en ventana`; TOP PICKS no incluye futbol amateur.
+
+---
+
+## 2026-06-02 - Descripciones de picks de futbol en espanol claro
+
+- Problema detectado:
+  - Algunos picks salian con etiquetas tecnicas poco entendibles para usuario final, especialmente `Corners Spread Morocco -4`.
+  - La app no explicaba el margen necesario ni cuando una linea entera se devuelve.
+- Cambios en `src/services/football-analyzer.js`:
+  - `formatFootballSelection()` ahora devuelve textos accionables para:
+    - ML.
+    - Double Chance.
+    - Totales de goles/corners/tarjetas.
+    - Team totals.
+    - Spreads de goles, corners y tarjetas.
+  - Nuevos helpers de formato:
+    - `formatFootballLineValue()`.
+    - `footballOpponentBySide()`.
+    - `footballPeriodLabel()`.
+    - `formatFootballOverUnderSelection()`.
+    - `formatFootballTeamTotalSelection()`.
+    - `formatFootballHandicapSelection()`.
+  - Para handicaps enteros se explica el push/devolucion:
+    - Ejemplo real: `Morocco -4 corners` ahora sale como `Morocco -4 corners: necesita superar a Madagascar por 5+ corners en el partido. Si gana por 4, se devuelve.`
+  - Si el feed no informa linea, ya no se muestra `handicap`; se explica como linea no informada.
+- Validacion:
+  - `node --check src/services/football-analyzer.js` OK.
+  - Deploy Docker con `docker compose up --build -d` OK.
+  - `/api/futbol/analyze?refresh=1` respondio `partidos=12`, `totalPicks=9`.
+  - Muestras verificadas:
+    - `Morocco vs Madagascar` / `Corners Spread`: texto claro con margen `5+` y devolucion por `4`.
+    - `Wales vs Ghana` / `Corners Spread`: texto claro con margen `2+` y devolucion por `1`.
+
+---
+
+## 2026-06-02 - Auditoria final app, cache, futbol y UI desplegada
+
+- Cambios principales aplicados:
+  - Cache persistente de analisis en DB (`005_analysis_cache.sql`, `db-migrations.js`, `analysis-response-cache.js`) y cache compartida para ESPN soccer scoreboard/summary.
+  - `pick-coherence.js` conectado en NBA/WNBA para descartar contradicciones entre game totals y team totals.
+  - Runtime limpio para DANY PICKS, sin dependencia de `getRuntimeConfig().tennis`; cuotas sharp/retail salen de `sharpBook` / `retailBook`.
+  - `pick-calibration.js`: futbol/futbol baja el minimo a 52.
+  - API-Sports futbol normaliza probabilidades 1X2, evita lambdas negativas, expone fortalezas ataque/defensa, H2H, BTTS, over/under y marca `api_sports_has_predictions`.
+  - `football-analyzer.js` exige datos reales para recomendar; fixture-only o priors no pasan como verde/amarillo.
+  - Mundial/FIFA/UEFA siguen permitidos. Amistosos internacionales senior se permiten; amistosos de clubes, juveniles, reservas y femeninos se excluyen.
+  - Picks futbol degradados por `football-odds-policy` (`sin_valor`, `data_quality_baja`, etc.) ya no quedan en `partido.picks`; se mueven a `partido.sin_valor`.
+  - `quiniela-football-bridge.js` y `quiniela-probability.js` ahora aprovechan contexto API-Sports/ESPN ampliado, probabilidades Poisson fallback, forma reciente, ataque/defensa y calidad de datos.
+  - UI: textos base en espanol claro, nuevos modulos `tennis-copy.js` y `tennis-match-card.js`, `mlb-copy.js` corregido y bloque responsive en `styles.css` para evitar desalineacion/overflow en cards, hero, stats y quiniela.
+  - Nombre operativo unificado: `/api/health` reporta `service=danny-pick` y quiniela usa `User-Agent: danny-pick/quiniela-module`.
+- Validacion:
+  - `node --check` OK en archivos backend/frontend tocados.
+  - `docker compose up --build -d` OK; contenedor `danny-pick` recreado y arriba en `0.0.0.0:3000->3000`.
+  - `/api/health`: `status=ok`.
+  - `/api/futbol/analyze`: `partidos=9`, `picks=0`; `Wales vs Ghana` queda como `sin_valor` anidado, no como recomendado global.
+  - `/api/quiniela/analyze`: 14 partidos cargados.
+  - Logs recientes sin crash del contenedor; `quiniela-results` omite polling cuando la jornada esta abierta.
+  - Verificacion visual en navegador embebido no pudo completarse porque la politica interna bloqueo `http://localhost:3000/`; se uso verificacion HTTP/API/logs/sintaxis y revision estatica CSS/HTML.
+
+---
+
+## 2026-06-02 - Contexto real adicional para EV NBA/WNBA/NFL
+
+- Objetivo:
+  - Revisar campos reales ya disponibles que no estaban pesando bien en EV/probabilidad para NBA, WNBA y NFL.
+  - Mantener los value gates estrictos; no subir picks por relajar filtros.
+- Hallazgos:
+  - NBA/WNBA parseaban `defRtg`, pero `project*TeamTotal()` usaba `offRtg1h` del rival como defensa. Ademas el sentido del factor estaba invertido para defensas mejores/peores.
+  - NBA declaraba defensa rival y H2H como factores, pero el total de partido no tenia H2H full-game real y el ML dependia demasiado de ofensiva.
+  - NBA tenia provider API-Sports Basketball disponible como fallback, pero `buildNbaGameContext()` no lo llamaba cuando ESPN no completaba stats de temporada.
+  - NFL traia schedule reciente y API-Sports puede traer yardas, pero el modelo no usaba puntos permitidos/yardas permitidas y la varianza del equipo podia basarse en total del partido, no puntos del equipo.
+- Cambios:
+  - `src/providers/shared/espn-pro.js`:
+    - Nuevo `parseEspnTeamRecentScoring()` con puntos a favor, puntos permitidos y totales recientes por equipo.
+    - Nuevo `parseEspnH2hFullTotal()` para promedio H2H de partido completo.
+  - `src/providers/shared/api-sports-pro.js`:
+    - `parseAmericanFootballTeamStats()` ahora expone `ptsAllowedPerGame` y `yardsAllowedPerGame` si el feed los trae.
+    - Nuevo `parseApiSportsH2hFullTotal()`.
+  - `src/providers/espn-nba.js`:
+    - Usa API-Sports Basketball como fallback real cuando ESPN no trae temporada completa de ambos equipos.
+    - Agrega `ctx.h2h.averageTotal`.
+  - `src/providers/espn-nfl.js`:
+    - Enriquecimiento desde schedule con `recentScores`, `recentPointsAllowed`, `ptsAllowedPerGame`, `recentGameTotals` y `h2h.averageTotal`.
+    - La completitud ESPN exige stats de temporada de ambos equipos antes de omitir fallback API-Sports.
+  - `src/services/nba-projection.js`:
+    - First half, team totals y game totals usan `defRtg` del rival con direccion correcta.
+    - ML usa diferencial net rating `(offRtg - defRtg)` + forma + lesiones.
+    - Totales mezclan H2H full-game solo si la diferencia contra el modelo es razonable.
+  - `src/services/wnba-projection.js`:
+    - Team totals usan `defRtg` real del rival con direccion correcta.
+    - ML usa net rating real + forma + lesiones + fatiga.
+  - `src/services/nfl-projection.js`:
+    - Team totals usan puntos anotados, puntos permitidos del rival, yardas vs yardas permitidas, QB, clima, fatiga y lesiones.
+    - ML usa diferencial neto real, yardas y QB.
+    - Game total mezcla H2H full-game conservador y usa sigma dinamico sobre puntos del equipo.
+- Validacion:
+  - `node --check` OK en providers/projections tocados.
+  - `docker compose up --build -d` OK.
+  - `/api/health`: `status=ok`, `service=danny-pick`.
+  - `/api/nba/analyze?refresh=1`, `/api/wnba/analyze?refresh=1`, `/api/nfl/analyze?refresh=1`: HTTP 200. En la fecha actual no habia juegos en ventana, por eso `games=0`, `picks=0`.
+  - Prueba controlada de proyecciones confirma uso de `defRtg`, `ptsAllowedPerGame`, `yardsAllowedPerGame` y `h2h.averageTotal`.
+  - Logs del contenedor filtrados por errores fuertes sin coincidencias.

@@ -108,9 +108,7 @@ export async function loadSnapshotsFromDb() {
       });
       loaded += 1;
     }
-    if (loaded > 0) {
-      console.log(`[analysis-cache] ${loaded} snapshots restaurados desde BD al arrancar.`);
-    }
+    console.log(`[analysis-cache] ${loaded} snapshots restaurados desde BD al arrancar.`);
     return loaded;
   } catch (err) {
     console.warn("[analysis-cache] No se pudo cargar snapshots desde BD:", err.message);

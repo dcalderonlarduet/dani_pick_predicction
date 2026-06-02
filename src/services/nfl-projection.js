@@ -36,17 +36,52 @@ export const FACTOR_WEIGHTS_NFL_ML = {
   h2h_divisional: 0.05,
 };
 
-function matchupDefFactor(defRtg, avgDef) {
-  if (defRtg > avgDef + 2) return 0.88;
-  if (defRtg < avgDef - 2) return 1.12;
+function readNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function matchupDefFactor(allowedPts, avgAllowed) {
+  if (allowedPts < avgAllowed - 2) return 0.9;
+  if (allowedPts > avgAllowed + 2) return 1.1;
   return 1;
+}
+
+function teamPtsFor(team, avg) {
+  return readNumber(team?.form?.ptsPerGame, team?.form?.avgFor, avg.ptsGame / 2) ?? avg.ptsGame / 2;
+}
+
+function teamPtsAllowed(team, avg) {
+  return readNumber(
+    team?.form?.ptsAllowedPerGame,
+    team?.form?.pointsAllowedPerGame,
+    team?.form?.avgAgainst,
+    team?.form?.defRtg,
+    avg.ptsGame / 2
+  ) ?? avg.ptsGame / 2;
+}
+
+function yardsMatchupFactor(team, rival) {
+  const offense = readNumber(team?.form?.yardsPerGame);
+  const rivalAllowed = readNumber(rival?.form?.yardsAllowedPerGame);
+  if (!Number.isFinite(offense) || !Number.isFinite(rivalAllowed)) return 1;
+  return clamp(1 + (offense - rivalAllowed) / 1000, 0.92, 1.08);
 }
 
 export function projectNflFirstHalfTotal(ctx) {
   const avg = ctx.averages;
   const clima = ctx.clima_factor ?? 1;
-  const homePts = (ctx.home?.form?.pts1h ?? avg.pts1h) * matchupDefFactor(ctx.away?.form?.ptsPerGame ?? avg.defRtg, avg.defRtg);
-  const awayPts = (ctx.away?.form?.pts1h ?? avg.pts1h) * matchupDefFactor(ctx.home?.form?.ptsPerGame ?? avg.defRtg, avg.defRtg);
+  const homePts = readNumber(ctx.home?.form?.pts1h, teamPtsFor(ctx.home, avg) * 0.48, avg.pts1h / 2) *
+    matchupDefFactor(teamPtsAllowed(ctx.away, avg) * 0.48, avg.pts1h / 2);
+  const awayPts = readNumber(ctx.away?.form?.pts1h, teamPtsFor(ctx.away, avg) * 0.48, avg.pts1h / 2) *
+    matchupDefFactor(teamPtsAllowed(ctx.home, avg) * 0.48, avg.pts1h / 2);
   const homeQb = ctx.home?.qb_factor ?? 1;
   const awayQb = ctx.away?.qb_factor ?? 1;
   const total = (homePts * homeQb + awayPts * awayQb) * clima;
@@ -62,34 +97,52 @@ export function projectNflTeamTotal(ctx, side) {
   const avg = ctx.averages;
   const team = side === "home" ? ctx.home : ctx.away;
   const rival = side === "home" ? ctx.away : ctx.home;
-  const pts = (team?.form?.ptsPerGame ?? avg.ptsGame / 2) * 0.98;
-  const defRival = rival?.form?.ptsPerGame ?? avg.ptsGame / 2;
+  const pts = teamPtsFor(team, avg);
+  const defRival = teamPtsAllowed(rival, avg);
   const qb = team?.qb_factor ?? 1;
   const fatigue = team?.fatigue?.factor ?? 1;
   const injuryPts = team?.injuryPenalty || 0;
-  const projected = ((pts + (avg.ptsGame / 2 - defRival)) / 2) * qb * (ctx.clima_factor ?? 1) * fatigue - injuryPts;
+  const projected = (pts * 0.6 + defRival * 0.4) * yardsMatchupFactor(team, rival) * qb * (ctx.clima_factor ?? 1) * fatigue - injuryPts;
   return { pts: Math.max(10, projected), factors_used: Object.keys(FACTOR_WEIGHTS_NFL_TEAM) };
 }
 
 export function projectNflGameTotal(ctx) {
   const home = projectNflTeamTotal(ctx, "home");
   const away = projectNflTeamTotal(ctx, "away");
+  let muHome = home.pts;
+  let muAway = away.pts;
+  const h2hMean = Number(ctx.h2h?.averageTotal);
+  if (Number.isFinite(h2hMean) && ctx.flags?.h2h_relevante) {
+    const current = muHome + muAway;
+    const blendedTotal = current * 0.75 + h2hMean * 0.25;
+    const delta = blendedTotal - current;
+    if (Math.abs(h2hMean - current) <= 10) {
+      muHome += delta / 2;
+      muAway += delta / 2;
+    }
+  }
   const sigmaHome = computeDynamicSigma(ctx.home, NFL_SIGMA_GAME, { minSample: 5, minSigma: 5 });
   const sigmaAway = computeDynamicSigma(ctx.away, NFL_SIGMA_GAME, { minSample: 5, minSigma: 5 });
   return {
-    muHome: home.pts,
-    muAway: away.pts,
+    muHome,
+    muAway,
     sigmaHome,
     sigmaAway,
-    meanTotal: home.pts + away.pts,
-    factors_used: ["team_total_home", "team_total_away", "sigma_dinamico"],
+    meanTotal: muHome + muAway,
+    factors_used: ["team_total_home", "team_total_away", "sigma_dinamico", "h2h_full_total"],
   };
 }
 
 export function projectNflMoneyline(ctx) {
-  const homePower = (ctx.home?.form?.ptsPerGame ?? 22) - (ctx.away?.form?.ptsPerGame ?? 22);
+  const avg = ctx.averages;
+  const homeNet = teamPtsFor(ctx.home, avg) - teamPtsAllowed(ctx.home, avg);
+  const awayNet = teamPtsFor(ctx.away, avg) - teamPtsAllowed(ctx.away, avg);
+  const homeYards = readNumber(ctx.home?.form?.yardsPerGame, 330);
+  const awayYards = readNumber(ctx.away?.form?.yardsPerGame, 330);
+  const yardEdge = Number.isFinite(homeYards) && Number.isFinite(awayYards) ? (homeYards - awayYards) / 100 : 0;
+  const powerEdge = homeNet - awayNet;
   const qbEdge = (ctx.home?.qb_factor ?? 1) - (ctx.away?.qb_factor ?? 1);
-  const score = homePower * 0.04 + qbEdge * 0.25 + 0.08;
+  const score = powerEdge * 0.04 + yardEdge * 0.025 + qbEdge * 0.25 + 0.08;
   const probHome = 1 / (1 + Math.exp(-score * 2.2));
   return {
     probHome,

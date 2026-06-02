@@ -22,11 +22,11 @@
       - ./004_picks_history.sql:/docker-entrypoint-initdb.d/004_picks_history.sql:ro
       - ./005_analysis_cache.sql:/docker-entrypoint-initdb.d/005_analysis_cache.sql:ro
 
-  tennis-oracle:
+  danny-pick:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: tennis-oracle
+    container_name: danny-pick
     depends_on:
       postgres:
         condition: service_healthy

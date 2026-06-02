@@ -1,10 +1,15 @@
 import { clamp, round } from "../utils/math.js";
 import { canonicalName } from "./shared/tennis-normalizers.js";
 import { fetchJson } from "./shared/http.js";
+import { loadWithCache } from "./shared/resource-cache.js";
 
 const ESPN_SOCCER_BASE_URL = process.env.ESPN_SOCCER_BASE_URL || "https://site.api.espn.com/apis/site/v2/sports/soccer";
-const SUMMARY_CACHE = new Map();
-const SCOREBOARD_CACHE = new Map();
+const ESPN_SCOREBOARD_NS = "espn-soccer:scoreboard";
+const ESPN_SUMMARY_NS = "espn-soccer:summary";
+const ESPN_SCOREBOARD_TTL_MS = 20 * 60 * 1000;
+const ESPN_SCOREBOARD_STALE_MS = 4 * 60 * 60 * 1000;
+const ESPN_SUMMARY_TTL_MS = 30 * 60 * 1000;
+const ESPN_SUMMARY_STALE_MS = 6 * 60 * 60 * 1000;
 
 const LEAGUE_MAPPINGS = [
   { test: /(england-premier-league|premier league|eng\.1)/i, slug: "eng.1" },
@@ -13,6 +18,9 @@ const LEAGUE_MAPPINGS = [
   { test: /(germany-bundesliga|bundesliga|ger\.1)/i, slug: "ger.1" },
   { test: /(italy-serie-a|serie a|ita\.1)/i, slug: "ita.1" },
   { test: /(france-ligue-1|ligue 1|fra\.1)/i, slug: "fra.1" },
+  { test: /(world-cup-qualification|world cup qualification|world cup qualifiers|copa mundial eliminatoria|eliminatorias mundial|fifa\.worldq)/i, slug: "fifa.worldq" },
+  { test: /(fifa-world-cup|world cup|copa mundial|mundial|fifa\.world)/i, slug: "fifa.world" },
+  { test: /(international friendl|friendly international|friendlies international|intl friendl|fifa friendl|amistos.*internacional|internacional.*amistos|fifa\.friendly)/i, slug: "fifa.friendly" },
   { test: /(uefa-champions-league|champions league|uefa champions|uefa\.champions)/i, slug: "uefa.champions" },
   { test: /(uefa-europa-league|europa league|uefa europa|uefa\.europa)/i, slug: "uefa.europa" },
   { test: /(uefa-conference-league|conference league|uefa conference)/i, slug: "uefa.europa.conf" },
@@ -113,33 +121,35 @@ function scoreboardMatchScore(event, home, away) {
 }
 
 async function fetchScoreboard(leagueSlug, date) {
-  const cacheKey = `${leagueSlug}|${date}`;
-  if (SCOREBOARD_CACHE.has(cacheKey)) {
-    return SCOREBOARD_CACHE.get(cacheKey);
-  }
-
-  const promise = fetchJson(`${ESPN_SOCCER_BASE_URL}/${leagueSlug}/scoreboard?dates=${toEspnDate(date)}`, {
-    provider: `espn-soccer:${leagueSlug}:scoreboard`,
-    timeoutMs: 15000,
-  }).catch(() => null);
-
-  SCOREBOARD_CACHE.set(cacheKey, promise);
-  return promise;
+  return loadWithCache(
+    ESPN_SCOREBOARD_NS,
+    `${leagueSlug}|${date}`,
+    {
+      ttlMs: ESPN_SCOREBOARD_TTL_MS,
+      staleMs: ESPN_SCOREBOARD_STALE_MS,
+      allowStaleOnError: true,
+    },
+    () => fetchJson(`${ESPN_SOCCER_BASE_URL}/${leagueSlug}/scoreboard?dates=${toEspnDate(date)}`, {
+      provider: `espn-soccer:${leagueSlug}:scoreboard`,
+      timeoutMs: 15000,
+    })
+  ).catch(() => null);
 }
 
 async function fetchSummary(leagueSlug, eventId) {
-  const cacheKey = `${leagueSlug}|${eventId}`;
-  if (SUMMARY_CACHE.has(cacheKey)) {
-    return SUMMARY_CACHE.get(cacheKey);
-  }
-
-  const promise = fetchJson(`${ESPN_SOCCER_BASE_URL}/${leagueSlug}/summary?event=${eventId}`, {
-    provider: `espn-soccer:${leagueSlug}:summary`,
-    timeoutMs: 15000,
-  }).catch(() => null);
-
-  SUMMARY_CACHE.set(cacheKey, promise);
-  return promise;
+  return loadWithCache(
+    ESPN_SUMMARY_NS,
+    `${leagueSlug}|${eventId}`,
+    {
+      ttlMs: ESPN_SUMMARY_TTL_MS,
+      staleMs: ESPN_SUMMARY_STALE_MS,
+      allowStaleOnError: true,
+    },
+    () => fetchJson(`${ESPN_SOCCER_BASE_URL}/${leagueSlug}/summary?event=${eventId}`, {
+      provider: `espn-soccer:${leagueSlug}:summary`,
+      timeoutMs: 15000,
+    })
+  ).catch(() => null);
 }
 
 function extractStatValue(stats = [], name) {
@@ -746,6 +756,18 @@ function buildCurrentInsight(evento, summary, recentSummaries) {
       away_cards_for: awayRecent.cardsForAvg ?? null,
       home_season_ppg: homeContext.record.pointsPerGame ?? null,
       away_season_ppg: awayContext.record.pointsPerGame ?? null,
+      home_goals_against: homeRecent.goalsAgainstAvg ?? null,
+      away_goals_against: awayRecent.goalsAgainstAvg ?? null,
+      home_season_goals_against: homeContext.season.goalsAgainstPerGame ?? null,
+      away_season_goals_against: awayContext.season.goalsAgainstPerGame ?? null,
+      home_btts_rate: homeRecent.bttsRate ?? null,
+      away_btts_rate: awayRecent.bttsRate ?? null,
+      home_over25_rate: homeRecent.over25Rate ?? null,
+      away_over25_rate: awayRecent.over25Rate ?? null,
+      home_win_rate_home: venueAdvantage.homeWinRate ?? null,
+      away_win_rate_away: venueAdvantage.awayWinRate ?? null,
+      home_recent_matches: homeRecent.matches ?? [],
+      away_recent_matches: awayRecent.matches ?? [],
       h2h_home_win_rate: h2h.homeRate ?? null,
       h2h_away_win_rate: h2h.awayRate ?? null,
       h2h_market_label: h2h.dominantMarketLabel || null,

@@ -1,4 +1,5 @@
 import { shiftDateString } from "../utils/madrid-date.js";
+import { clamp } from "../utils/math.js";
 import { fetchJson } from "./shared/http.js";
 import { loadWithCache, peekCacheEntry } from "./shared/resource-cache.js";
 import { canonicalName } from "./shared/tennis-normalizers.js";
@@ -238,6 +239,7 @@ function buildFixtureInsight(evento, fixture, detail = null, predictions = null)
       away_lineup_confirmed: lineupState.awayConfirmed,
       api_sports_fixture_id: snapshot?.fixture?.id || fixture?.fixture?.id || null,
       api_sports_league_id: snapshot?.league?.id || fixture?.league?.id || null,
+      api_sports_has_predictions: Boolean(predictionCtx),
       fixture_status: snapshot?.fixture?.status?.short || fixture?.fixture?.status?.short || null,
       fixture_status_label: snapshot?.fixture?.status?.long || fixture?.fixture?.status?.long || null,
       ...(predictionCtx || {}),
@@ -291,23 +293,106 @@ async function loadFixturePredictions(fixtureId, config) {
 }
 
 function parsePredictionPercent(value) {
-  const n = Number(String(value || "").replace("%", "").trim());
-  return Number.isFinite(n) && n > 0 ? n / 100 : null;
+  if (value == null || value === "") return null;
+  const n = Number(String(value).replace("%", "").trim());
+  return Number.isFinite(n) && n >= 0 ? n / 100 : null;
+}
+
+function parsePredictionNumber(value) {
+  const n = Number.parseFloat(String(value ?? "").replace("%", "").replace(",", ".").trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseGoalProjection(value) {
+  const n = parsePredictionNumber(value);
+  return Number.isFinite(n) && n >= 0 && n <= 8 ? n : null;
+}
+
+function parseLastFiveGames(last5 = {}) {
+  const wins = parsePredictionNumber(last5.wins) ?? 0;
+  const draws = parsePredictionNumber(last5.draws) ?? 0;
+  const loses = parsePredictionNumber(last5.loses ?? last5.losses) ?? 0;
+  return wins + draws + loses;
+}
+
+function parseUnderOverPrediction(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return null;
+  const numberMatch = text.match(/[-+]?\d+(?:[\.,]\d+)?/);
+  const rawLine = numberMatch ? Number.parseFloat(numberMatch[0].replace(",", ".")) : null;
+  if (!Number.isFinite(rawLine)) return null;
+  const side =
+    text.includes("under") || rawLine < 0
+      ? "under"
+      : text.includes("over") || rawLine > 0
+        ? "over"
+        : null;
+  return {
+    side,
+    line: Math.abs(rawLine),
+    raw: value,
+  };
+}
+
+function bttsRateFromLastFive(last5 = {}) {
+  const goalsFor = parseGoalProjection(last5?.goals?.for?.average);
+  const goalsAgainst = parseGoalProjection(last5?.goals?.against?.average);
+  if (!Number.isFinite(goalsFor) || !Number.isFinite(goalsAgainst)) return null;
+  const scoreProb = 1 - Math.exp(-Math.max(0, goalsFor));
+  const concedeProb = 1 - Math.exp(-Math.max(0, goalsAgainst));
+  return clamp(scoreProb * concedeProb, 0, 1);
+}
+
+function normalizePredictionTriplet(home, draw, away) {
+  if (![home, draw, away].every(Number.isFinite)) {
+    return { home, draw, away };
+  }
+  const sum = home + draw + away;
+  if (!Number.isFinite(sum) || sum <= 0) return { home, draw, away };
+  if (sum < 0.95 || sum > 1.05) {
+    return {
+      home: home / sum,
+      draw: draw / sum,
+      away: away / sum,
+    };
+  }
+  return { home, draw, away };
 }
 
 function extractPredictions(raw) {
   if (!raw) return null;
   const pct = raw?.predictions?.percent;
   const poisson = raw?.comparison?.poisson_distribution;
+  const attack = raw?.comparison?.attack;
+  const defence = raw?.comparison?.defence;
+  const h2h = raw?.comparison?.h2h;
   const goals = raw?.predictions?.goals;
   const last5Home = raw?.teams?.home?.last_5;
   const last5Away = raw?.teams?.away?.last_5;
 
-  const homeWinProb = parsePredictionPercent(poisson?.home ?? pct?.home);
-  const drawProb = parsePredictionPercent(poisson?.draw ?? pct?.draw);
-  const awayWinProb = parsePredictionPercent(poisson?.away ?? pct?.away);
-  const goalsHome = Number.parseFloat(goals?.home) || null;
-  const goalsAway = Number.parseFloat(goals?.away) || null;
+  const rawHomeWinProb = parsePredictionPercent(poisson?.home ?? pct?.home);
+  const rawDrawProb = parsePredictionPercent(poisson?.draw ?? pct?.draw);
+  const rawAwayWinProb = parsePredictionPercent(poisson?.away ?? pct?.away);
+  const normalizedProbs = normalizePredictionTriplet(rawHomeWinProb, rawDrawProb, rawAwayWinProb);
+  const homeWinProb = normalizedProbs.home;
+  const drawProb = normalizedProbs.draw;
+  const awayWinProb = normalizedProbs.away;
+  const goalsHome = parseGoalProjection(goals?.home);
+  const goalsAway = parseGoalProjection(goals?.away);
+  const homeGames = parseLastFiveGames(last5Home);
+  const awayGames = parseLastFiveGames(last5Away);
+  const homeWins = parsePredictionNumber(last5Home?.wins) ?? 0;
+  const awayWins = parsePredictionNumber(last5Away?.wins) ?? 0;
+  const homeBttsRate = bttsRateFromLastFive(last5Home);
+  const awayBttsRate = bttsRateFromLastFive(last5Away);
+  const modelBttsRate =
+    Number.isFinite(homeBttsRate) && Number.isFinite(awayBttsRate)
+      ? (homeBttsRate + awayBttsRate) / 2
+      : Number.isFinite(homeBttsRate)
+        ? homeBttsRate
+        : Number.isFinite(awayBttsRate)
+          ? awayBttsRate
+          : null;
 
   if (!homeWinProb && !awayWinProb) return null;
 
@@ -317,12 +402,23 @@ function extractPredictions(raw) {
     model_away_prob: awayWinProb,
     model_goals_home: goalsHome,
     model_goals_away: goalsAway,
-    model_home_form: last5Home ? (last5Home.wins / Math.max(1, (last5Home.wins + last5Home.draws + last5Home.loses))) : null,
-    model_away_form: last5Away ? (last5Away.wins / Math.max(1, (last5Away.wins + last5Away.draws + last5Away.loses))) : null,
-    model_home_goals_for: Number.parseFloat(last5Home?.goals?.for?.average) || null,
-    model_away_goals_for: Number.parseFloat(last5Away?.goals?.for?.average) || null,
-    model_home_goals_against: Number.parseFloat(last5Home?.goals?.against?.average) || null,
-    model_away_goals_against: Number.parseFloat(last5Away?.goals?.against?.average) || null,
+    model_home_form: last5Home ? homeWins / Math.max(1, homeGames) : null,
+    model_away_form: last5Away ? awayWins / Math.max(1, awayGames) : null,
+    model_home_form_string: last5Home?.form || null,
+    model_away_form_string: last5Away?.form || null,
+    model_home_goals_for: parseGoalProjection(last5Home?.goals?.for?.average),
+    model_away_goals_for: parseGoalProjection(last5Away?.goals?.for?.average),
+    model_home_goals_against: parseGoalProjection(last5Home?.goals?.against?.average),
+    model_away_goals_against: parseGoalProjection(last5Away?.goals?.against?.average),
+    model_home_attack_strength: parsePredictionPercent(attack?.home),
+    model_away_attack_strength: parsePredictionPercent(attack?.away),
+    model_home_defence_strength: parsePredictionPercent(defence?.home),
+    model_away_defence_strength: parsePredictionPercent(defence?.away),
+    model_h2h_home_rate: parsePredictionPercent(h2h?.home),
+    model_h2h_draw_rate: parsePredictionPercent(h2h?.draw),
+    model_h2h_away_rate: parsePredictionPercent(h2h?.away),
+    model_under_over: parseUnderOverPrediction(raw?.predictions?.under_over),
+    model_btts_rate: Number.isFinite(modelBttsRate) ? modelBttsRate : null,
     model_advice: raw?.predictions?.advice || null,
   };
 }

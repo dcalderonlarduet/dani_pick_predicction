@@ -36,6 +36,11 @@ const FOOTBALL_MAX_ODDS = _cfg.maxOdds;
 const FOOTBALL_MIN_CONF = _cfg.minConfidence;
 const FOOTBALL_DROP_MIN = _cfg.dropMin;
 const FOOTBALL_MAX_MATCH = _cfg.maxMatches;
+const FOOTBALL_VERDE_CONF_MIN = Math.max(FOOTBALL_MIN_CONF, 62);
+const FOOTBALL_AMARILLO_CONF_MIN = 50;
+const FOOTBALL_EV_VERDE = Math.max(FOOTBALL_EV_MIN, 0.05);
+const FOOTBALL_EV_AMARILLO = 0.03;
+const FOOTBALL_DISPLAY_CONF_MIN = 52;
 const _apiSportsCfg = getRuntimeConfig().apiSportsFootball;
 const PICK_MODE = String(process.env.FOOTBALL_PICK_MODE || process.env.PICK_MODE || "value").toLowerCase();
 const FOOTBALL_VALUE_EV_MIN = Number.parseFloat(process.env.FOOTBALL_VALUE_EV_MIN || "0.04");
@@ -213,8 +218,18 @@ const TIER3_LEAGUES = [
   "mls",
 ];
 
-// Exclude youth/reserve/friendly competitions regardless of tier match
-const YOUTH_EXCLUSION_PATTERNS = /\bu(17|18|19|20|21|23)\b|youth|junior|reserve|reserves|sub-17|sub-20|sub-21|sub-23|friendly|preseason|pre-season|women|ladies|femenin/i;
+// Exclude youth/reserve/women competitions regardless of tier match.
+// Senior international friendlies are allowed separately; club friendlies stay excluded.
+const YOUTH_EXCLUSION_PATTERNS = /\bu(17|18|19|20|21|23)\b|youth|junior|reserve|reserves|sub-17|sub-20|sub-21|sub-23|women|ladies|femenin/i;
+const FRIENDLY_PATTERN = /\b(friendl(?:y|ies)|amistos(?:o|os|a|as))\b/i;
+const INTERNATIONAL_PATTERN = /\b(international|internationals|intl|world|fifa|national|nations|internacional|selecciones?)\b/i;
+const CLUB_FRIENDLY_LEAGUE_PATTERN = /\b(club|clubs|preseason|pre-season)\b/i;
+const CLUB_FRIENDLY_TEAM_PATTERN = /\b(fc|cf|afc|sc|ac|as|cd|ud|club|reserves?|ii|b)\b/i;
+const WOMEN_SHORT_MARKER_PATTERN = /(?:^|[\s([._-])W(?:$|[\s)\].,_-])|(?:^|[\s._-])w(?:$|[\s._-])/;
+
+function hasWomenMarker(...values) {
+  return values.some((value) => WOMEN_SHORT_MARKER_PATTERN.test(String(value || "")));
+}
 
 function isYouthOrExcludedEvent(evento) {
   const leagueName = String(evento?.league?.name || evento?.league || "");
@@ -225,8 +240,53 @@ function isYouthOrExcludedEvent(evento) {
     YOUTH_EXCLUSION_PATTERNS.test(leagueName) ||
     YOUTH_EXCLUSION_PATTERNS.test(leagueSlug) ||
     YOUTH_EXCLUSION_PATTERNS.test(homeName) ||
-    YOUTH_EXCLUSION_PATTERNS.test(awayName)
+    YOUTH_EXCLUSION_PATTERNS.test(awayName) ||
+    hasWomenMarker(leagueName, leagueSlug, homeName, awayName)
   );
+}
+
+function hasRealDataForPick(ctx) {
+  if (!ctx) return false;
+  const source = String(ctx.__source || ctx.source || "").toLowerCase();
+  if (source === "priors") return false;
+  if (source.includes("espn")) return true;
+  const hasForm =
+    (Array.isArray(ctx.forma) && ctx.forma.length > 0) ||
+    (Array.isArray(ctx.home_recent_matches) && ctx.home_recent_matches.length > 0) ||
+    (Array.isArray(ctx.away_recent_matches) && ctx.away_recent_matches.length > 0);
+  const hasPoisson = Number.isFinite(ctx.model_home_prob) && Number.isFinite(ctx.model_away_prob);
+  const hasExpectedGoals = Number.isFinite(ctx.expected_goals) && ctx.expected_goals > 0;
+  const hasApiPrediction = Boolean(ctx.api_sports_has_predictions) || hasPoisson || hasExpectedGoals;
+  if (source.includes("api-sports")) return hasApiPrediction;
+  const hasGoals =
+    Number.isFinite(ctx.home_goals_for) &&
+    ctx.home_goals_for > 0 &&
+    Number.isFinite(ctx.away_goals_for) &&
+    ctx.away_goals_for > 0;
+  return hasForm || hasGoals || hasPoisson || hasExpectedGoals;
+}
+
+function isSeniorInternationalFriendly(evento) {
+  const leagueName = String(evento?.league?.name || evento?.league || "");
+  const leagueSlug = String(evento?.league?.slug || "");
+  const homeName = String(evento?.home || evento?.homeTeam?.name || "");
+  const awayName = String(evento?.away || evento?.awayTeam?.name || "");
+  const leagueText = `${leagueName} ${leagueSlug}`;
+
+  if (!FRIENDLY_PATTERN.test(leagueText) || !INTERNATIONAL_PATTERN.test(leagueText)) return false;
+  if (CLUB_FRIENDLY_LEAGUE_PATTERN.test(leagueText)) return false;
+  if (
+    YOUTH_EXCLUSION_PATTERNS.test(leagueText) ||
+    YOUTH_EXCLUSION_PATTERNS.test(homeName) ||
+    YOUTH_EXCLUSION_PATTERNS.test(awayName) ||
+    hasWomenMarker(leagueText, homeName, awayName)
+  ) {
+    return false;
+  }
+  if (CLUB_FRIENDLY_TEAM_PATTERN.test(homeName) || CLUB_FRIENDLY_TEAM_PATTERN.test(awayName)) {
+    return false;
+  }
+  return true;
 }
 
 function normalizeExpectedValue(value) {
@@ -260,45 +320,156 @@ function averageFinite(...values) {
   return finite.reduce((sum, value) => sum + value, 0) / finite.length;
 }
 
+function poissonPmfSimple(k, lambda) {
+  if (k < 0 || !Number.isFinite(lambda) || lambda <= 0) return 0;
+  let probability = Math.exp(-lambda);
+  for (let i = 1; i <= k; i += 1) {
+    probability *= lambda / i;
+  }
+  return probability;
+}
+
+function estimatePoissonOverProb(lambdaHome, lambdaAway, line = 2.5) {
+  const lambda = Number(lambdaHome) + Number(lambdaAway);
+  const threshold = Math.floor(Number(line));
+  if (!Number.isFinite(lambda) || lambda <= 0 || !Number.isFinite(threshold) || threshold < 0) return null;
+
+  let underOrPush = 0;
+  for (let goals = 0; goals <= threshold; goals += 1) {
+    underOrPush += poissonPmfSimple(goals, lambda);
+  }
+  return clamp(1 - underOrPush, 0.01, 0.99);
+}
+
+function recentResultCode(entry) {
+  const value = typeof entry === "string" ? entry : entry?.result;
+  const normalized = String(value || "").toUpperCase();
+  return normalized === "W" || normalized === "D" || normalized === "L" ? normalized : null;
+}
+
+function recentMatchesForFocus(ctx = {}) {
+  if (ctx.teamFocus === "home" && Array.isArray(ctx.home_recent_matches)) return ctx.home_recent_matches;
+  if (ctx.teamFocus === "away" && Array.isArray(ctx.away_recent_matches)) return ctx.away_recent_matches;
+  if (Array.isArray(ctx.forma)) return ctx.forma.map((result) => ({ result }));
+  return [];
+}
+
+function weightedRecentFormRatio(matches = []) {
+  const usable = matches.slice(0, 6).map(recentResultCode).filter(Boolean);
+  if (!usable.length) return null;
+
+  let weightedPoints = 0;
+  let maxWeightedPoints = 0;
+  usable.forEach((result, index) => {
+    const weight = 0.8 ** index;
+    weightedPoints += weight * (result === "W" ? 3 : result === "D" ? 1 : 0);
+    maxWeightedPoints += weight * 3;
+  });
+
+  return maxWeightedPoints > 0 ? weightedPoints / maxWeightedPoints : null;
+}
+
+function attackVsDefenseMetric(attackGoals, rivalGoalsAgainst, attackStrength, rivalDefenceStrength) {
+  let base = averageFinite(attackGoals, rivalGoalsAgainst) ?? attackGoals ?? 0;
+  if (Number.isFinite(attackStrength)) {
+    base += (attackStrength - 0.5) * 0.7;
+  }
+  if (Number.isFinite(rivalDefenceStrength)) {
+    base += (0.5 - rivalDefenceStrength) * 0.45;
+  }
+  return Math.max(0.25, base);
+}
+
+function apiSportsUnderOverAligns(ctx, betSide) {
+  const signal = ctx?.api_sports_under_over || ctx?.model_under_over || null;
+  const side = String(signal?.side || "").toLowerCase();
+  if (!side || !betSide) return false;
+  return side === String(betSide).toLowerCase();
+}
+
 function buildFootballMarketContextScore(mercado, ctx, betSide = null) {
-  const expectedGoals = ctx?.expected_goals ?? averageFinite(ctx?.goles_favor_local, ctx?.goles_favor_away) ?? 0;
+  const homeGoalsFor = readFiniteNumber(ctx?.home_goals_for, ctx?.goles_favor_local) ?? 0;
+  const awayGoalsFor = readFiniteNumber(ctx?.away_goals_for, ctx?.goles_favor_away) ?? 0;
+  const homeGoalsAgainst = readFiniteNumber(ctx?.home_goals_against, ctx?.home_season_goals_against);
+  const awayGoalsAgainst = readFiniteNumber(ctx?.away_goals_against, ctx?.away_season_goals_against);
+  const homeVsRival = attackVsDefenseMetric(
+    homeGoalsFor,
+    awayGoalsAgainst,
+    readFiniteNumber(ctx?.home_attack_strength, ctx?.model_home_attack_strength),
+    readFiniteNumber(ctx?.away_defence_strength, ctx?.model_away_defence_strength)
+  );
+  const awayVsRival = attackVsDefenseMetric(
+    awayGoalsFor,
+    homeGoalsAgainst,
+    readFiniteNumber(ctx?.away_attack_strength, ctx?.model_away_attack_strength),
+    readFiniteNumber(ctx?.home_defence_strength, ctx?.model_home_defence_strength)
+  );
+  const focusedGoals =
+    ctx?.teamFocus === "home"
+      ? homeVsRival
+      : ctx?.teamFocus === "away"
+        ? awayVsRival
+        : averageFinite(homeVsRival, awayVsRival) ?? 0;
+  const expectedGoals = ctx?.expected_goals ?? averageFinite(homeVsRival, awayVsRival) ?? 0;
   const expectedCorners = ctx?.expected_corners_total ?? averageFinite(ctx?.home_corners_for, ctx?.away_corners_for) ?? null;
   const expectedCards = ctx?.expected_cards_total ?? averageFinite(ctx?.home_cards_for, ctx?.away_cards_for) ?? null;
-  const focusedGoals = ctx?.goles_favor_equipo ?? averageFinite(ctx?.home_goals_for, ctx?.away_goals_for) ?? 0;
+  const combinedBtts = averageFinite(ctx?.home_btts_rate, ctx?.away_btts_rate, ctx?.h2h_btts_rate, ctx?.model_btts_rate);
+  const combinedOver25 = averageFinite(ctx?.home_over25_rate, ctx?.away_over25_rate, ctx?.h2h_over25_rate);
+  const homeShotsOnTarget = readFiniteNumber(ctx?.home_shots_on_target);
+  const awayShotsOnTarget = readFiniteNumber(ctx?.away_shots_on_target);
+  const totalShotsOnTarget = averageFinite(homeShotsOnTarget, awayShotsOnTarget) != null
+    ? (homeShotsOnTarget || 0) + (awayShotsOnTarget || 0)
+    : null;
   const isFirstHalf = String(mercado).includes("HT");
   const goalsReference = isFirstHalf ? expectedGoals * 0.46 : expectedGoals;
   const cornersReference = Number.isFinite(expectedCorners) ? expectedCorners * (isFirstHalf ? 0.48 : 1) : null;
   const cardsReference = Number.isFinite(expectedCards) ? expectedCards * (isFirstHalf ? 0.52 : 1) : null;
-  const focusedCorners =
-    ctx?.teamFocus === "home"
-      ? ctx?.home_corners_for
-      : ctx?.teamFocus === "away"
-        ? ctx?.away_corners_for
-        : averageFinite(ctx?.home_corners_for, ctx?.away_corners_for);
-  const focusedCards =
-    ctx?.teamFocus === "home"
-      ? ctx?.home_cards_for
-      : ctx?.teamFocus === "away"
-      ? ctx?.away_cards_for
-      : averageFinite(ctx?.home_cards_for, ctx?.away_cards_for);
 
   if (mercado === "Totals" || mercado === "Totals HT") {
-    let score = goalsReference >= 3.3 ? 8 : goalsReference >= 2.8 ? 6 : goalsReference >= 2.2 ? 4 : 1;
-    if (mercado === "Totals HT") {
-      score = goalsReference >= 1.65 ? 8 : goalsReference >= 1.45 ? 6 : goalsReference >= 1.15 ? 4 : 1;
+    const poissonOverProb = mercado === "Totals"
+      ? estimatePoissonOverProb(ctx?.lambda_home, ctx?.lambda_away, 2.5)
+      : null;
+    let score;
+
+    if (Number.isFinite(poissonOverProb)) {
+      const modelProb = betSide === "under" ? 1 - poissonOverProb : poissonOverProb;
+      score = modelProb >= 0.67 ? 8 : modelProb >= 0.58 ? 6 : modelProb >= 0.5 ? 4 : 1;
+    } else {
+      score = goalsReference >= 3.3 ? 8 : goalsReference >= 2.8 ? 6 : goalsReference >= 2.2 ? 4 : 1;
+      if (mercado === "Totals HT") {
+        score = goalsReference >= 1.65 ? 8 : goalsReference >= 1.45 ? 6 : goalsReference >= 1.15 ? 4 : 1;
+      }
     }
+
+    if (betSide === "over") {
+      if (Number.isFinite(combinedBtts) && combinedBtts >= 0.55) score = Math.min(score + 1, 8);
+      if (Number.isFinite(combinedOver25) && combinedOver25 >= 0.60) score = Math.min(score + 1, 8);
+      if (Number.isFinite(totalShotsOnTarget) && totalShotsOnTarget >= 8.5) score = Math.min(score + 1, 8);
+    }
+    if (betSide === "under" && Number.isFinite(combinedOver25) && combinedOver25 <= 0.30) {
+      score = Math.min(score + 1, 8);
+    }
+
     const h2hRate = ctx?.h2h_over25_rate;
     if (Number.isFinite(h2hRate)) {
       if (betSide === "over" && h2hRate >= 0.60) score = Math.min(score + 1, 8);
       if (betSide === "under" && h2hRate <= 0.35) score = Math.min(score + 1, 8);
     }
+    if (apiSportsUnderOverAligns(ctx, betSide)) score = Math.min(score + 1, 8);
     return score;
   }
 
   if (mercado === "Team Total Home" || mercado === "Team Total Away") {
-    if (focusedGoals >= 2.0) return 8;
-    if (focusedGoals >= 1.6) return 6;
-    if (focusedGoals >= 1.2) return 4;
+    const attackVsDefense = mercado === "Team Total Home" ? homeVsRival : awayVsRival;
+    if (betSide === "under") {
+      if (attackVsDefense <= 0.85) return 8;
+      if (attackVsDefense <= 1.05) return 6;
+      if (attackVsDefense <= 1.30) return 4;
+      return 1;
+    }
+    if (attackVsDefense >= 2.0) return 8;
+    if (attackVsDefense >= 1.6) return 6;
+    if (attackVsDefense >= 1.2) return 4;
     return 1;
   }
 
@@ -400,14 +571,73 @@ function extractFootballCtxSnapshot(baseCtx = {}) {
   const injuries = Array.isArray(baseCtx.lesiones)
     ? baseCtx.lesiones.filter((entry) => ["out", "doubtful"].includes(entry?.status)).length
     : 0;
+  const arr = (value) => (Array.isArray(value) ? value : []);
   return {
     source: baseCtx.__source || "priors",
+    lambda_home: baseCtx.lambda_home ?? null,
+    lambda_away: baseCtx.lambda_away ?? null,
     model_home_prob: baseCtx.model_home_prob ?? null,
     model_draw_prob: baseCtx.model_draw_prob ?? null,
     model_away_prob: baseCtx.model_away_prob ?? null,
     expected_goals: baseCtx.expected_goals ?? null,
     model_goals_home: baseCtx.model_goals_home ?? null,
     model_goals_away: baseCtx.model_goals_away ?? null,
+    home_goals_for: baseCtx.home_goals_for ?? null,
+    away_goals_for: baseCtx.away_goals_for ?? null,
+    home_goals_against: baseCtx.home_goals_against ?? null,
+    away_goals_against: baseCtx.away_goals_against ?? null,
+    goles_favor_local: baseCtx.goles_favor_local ?? null,
+    goles_favor_away: baseCtx.goles_favor_away ?? null,
+    forma: arr(baseCtx.forma),
+    home_forma: arr(baseCtx.home_forma),
+    away_forma: arr(baseCtx.away_forma),
+    home_recent_matches: arr(baseCtx.home_recent_matches),
+    away_recent_matches: arr(baseCtx.away_recent_matches),
+    home_win_rate: baseCtx.home_win_rate ?? null,
+    away_win_rate: baseCtx.away_win_rate ?? null,
+    home_win_rate_home: baseCtx.home_win_rate_home ?? null,
+    away_win_rate_away: baseCtx.away_win_rate_away ?? null,
+    home_attack_strength: baseCtx.home_attack_strength ?? baseCtx.model_home_attack_strength ?? null,
+    away_attack_strength: baseCtx.away_attack_strength ?? baseCtx.model_away_attack_strength ?? null,
+    home_defence_strength: baseCtx.home_defence_strength ?? baseCtx.model_home_defence_strength ?? null,
+    away_defence_strength: baseCtx.away_defence_strength ?? baseCtx.model_away_defence_strength ?? null,
+    home_btts_rate: baseCtx.home_btts_rate ?? null,
+    away_btts_rate: baseCtx.away_btts_rate ?? null,
+    model_btts_rate: baseCtx.model_btts_rate ?? null,
+    home_over25_rate: baseCtx.home_over25_rate ?? null,
+    away_over25_rate: baseCtx.away_over25_rate ?? null,
+    h2h_home_win_rate: baseCtx.h2h_home_win_rate ?? baseCtx.model_h2h_home_rate ?? null,
+    h2h_draw_rate: baseCtx.h2h_draw_rate ?? baseCtx.model_h2h_draw_rate ?? null,
+    h2h_away_win_rate: baseCtx.h2h_away_win_rate ?? baseCtx.model_h2h_away_rate ?? null,
+    h2h_over25_rate: baseCtx.h2h_over25_rate ?? null,
+    h2h_btts_rate: baseCtx.h2h_btts_rate ?? null,
+    h2h_avg_goals: baseCtx.h2h_avg_goals ?? null,
+    h2h_market_label: baseCtx.h2h_market_label || null,
+    expected_corners_total: baseCtx.expected_corners_total ?? null,
+    expected_cards_total: baseCtx.expected_cards_total ?? null,
+    home_corners_for: baseCtx.home_corners_for ?? null,
+    away_corners_for: baseCtx.away_corners_for ?? null,
+    home_corners_against: baseCtx.home_corners_against ?? null,
+    away_corners_against: baseCtx.away_corners_against ?? null,
+    home_cards_for: baseCtx.home_cards_for ?? null,
+    away_cards_for: baseCtx.away_cards_for ?? null,
+    home_cards_against: baseCtx.home_cards_against ?? null,
+    away_cards_against: baseCtx.away_cards_against ?? null,
+    home_shots_on_target: baseCtx.home_shots_on_target ?? null,
+    away_shots_on_target: baseCtx.away_shots_on_target ?? null,
+    api_sports_under_over: baseCtx.api_sports_under_over ?? baseCtx.model_under_over ?? null,
+    api_sports_has_predictions: Boolean(baseCtx.api_sports_has_predictions),
+    posicion: baseCtx.posicion ?? null,
+    home_posicion: baseCtx.home_posicion ?? null,
+    away_posicion: baseCtx.away_posicion ?? null,
+    total_equipos: baseCtx.total_equipos ?? null,
+    home_season_ppg: baseCtx.home_season_ppg ?? null,
+    away_season_ppg: baseCtx.away_season_ppg ?? null,
+    home_season_goals_against: baseCtx.home_season_goals_against ?? null,
+    away_season_goals_against: baseCtx.away_season_goals_against ?? null,
+    home_venue_advantage: baseCtx.home_venue_advantage ?? null,
+    home_gamma: baseCtx.home_gamma ?? null,
+    esTopLeague: Boolean(baseCtx.esTopLeague),
     home_lineup_confirmed: Boolean(baseCtx.home_lineup_confirmed),
     away_lineup_confirmed: Boolean(baseCtx.away_lineup_confirmed),
     lineup_confirmed: Boolean(baseCtx.lineup_confirmed),
@@ -440,6 +670,7 @@ function buildFootballModelLeanFromOdds(evento, odds, baseCtx, insight) {
       const mDraw = baseCtx.model_draw_prob;
       const mAway = baseCtx.model_away_prob;
       const mGoalsTotal = (baseCtx.model_goals_home ?? 0) + (baseCtx.model_goals_away ?? 0);
+      const has1x2Model = Number.isFinite(mHome) && Number.isFinite(mDraw) && Number.isFinite(mAway);
 
       if (mercado === "ML" && !isPickSideCoherentWithModel(betSide, mHome, mDraw, mAway)) {
         continue;
@@ -467,6 +698,8 @@ function buildFootballModelLeanFromOdds(evento, odds, baseCtx, insight) {
           ? clamp(mGoalsTotal / (goalLine + mGoalsTotal), 0.25, 0.88)
           : clamp(goalLine / (goalLine + mGoalsTotal), 0.25, 0.88);
       } else {
+        if ((mercado === "ML" || mercado === "Double Chance") && !has1x2Model) continue;
+        if (mercado === "Totals" && !Number.isFinite(baseCtx?.expected_goals)) continue;
         // Sin predicciones: ajuste contextual sobre probabilidad implícita
         const contextAdjustment = (scBase.total - 50) / 200;
         modelProb = clamp(impliedProb + contextAdjustment, 0.25, 0.88);
@@ -491,11 +724,11 @@ function buildFootballModelLeanFromOdds(evento, odds, baseCtx, insight) {
         href: null, modelOnly: true,
       };
 
-      if (esVerde(modelEv, sc.bestOdds, sc.total, sc.bajasTitulares, false, mercado)) {
+      if (esVerde(modelEv, sc.bestOdds, sc.total, sc.bajasTitulares, false, mercado, ctx)) {
         picks.push({ ...pick, estado: "verde" });
-      } else if (esAmarillo(modelEv, sc.bestOdds, sc.total, sc.bajasTitulares, false, mercado)) {
+      } else if (esAmarillo(modelEv, sc.bestOdds, sc.total, sc.bajasTitulares, false, mercado, ctx)) {
         picks.push({ ...pick, estado: "amarillo" });
-      } else {
+      } else if (sc.total >= FOOTBALL_DISPLAY_CONF_MIN && hasRealDataForPick(ctx)) {
         sin_valor.push({ ...pick, estado: "modelo", bet365Odds: sc.bet365Odds, winamaxOdds: sc.winamaxOdds, bestOdds: sc.bestOdds, drop12h: 0 });
       }
     }
@@ -535,16 +768,25 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
             ? 4
             : 0;
 
-  const pts = (ctx?.forma || []).reduce((sum, result) => sum + (result === "W" ? 3 : result === "D" ? 1 : 0), 0);
-  const hasFormData = (ctx?.forma || []).length > 0;
+  const recentMatches = recentMatchesForFocus(ctx);
+  const recentFormRatio = weightedRecentFormRatio(recentMatches);
+  const hasFormData = Number.isFinite(recentFormRatio);
   // Sin datos de forma: prior neutro según nivel de liga. Con datos pobres: penalizar sin bonus de liga.
   const baselineE = hasFormData ? 1 : (ctx?.esTopLeague ? 2 : 1);
-  const E = pts >= 13 ? 8 : pts >= 10 ? 6 : pts >= 7 ? 4 : baselineE;
+  const E = !hasFormData
+    ? baselineE
+    : recentFormRatio >= 0.75
+      ? 8
+      : recentFormRatio >= 0.58
+        ? 6
+        : recentFormRatio >= 0.40
+          ? 4
+          : baselineE;
 
   const F = buildFootballMarketContextScore(mercado, ctx, betSide);
 
-  const homeWinRate = ctx?.home_win_rate || 0.5;
-  const awayWinRate = ctx?.away_win_rate || 0.5;
+  const homeWinRate = ctx?.home_win_rate_home ?? ctx?.home_win_rate ?? 0.5;
+  const awayWinRate = ctx?.away_win_rate_away ?? ctx?.away_win_rate ?? 0.5;
   const rawTasa =
     ctx?.teamFocus === "home"
       ? homeWinRate
@@ -562,11 +804,25 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
     : (Number.isFinite(ctx?.home_season_ppg) && Number.isFinite(ctx?.away_season_ppg))
       ? (ctx.home_season_ppg + ctx.away_season_ppg) / 2
       : null;
-  const tasa = hasPoissonModel
+  let tasa = hasPoissonModel
     ? rawTasa
     : Number.isFinite(seasonPpg) && seasonPpg > 0
       ? rawTasa * 0.6 + clamp(seasonPpg / 3.0, 0.15, 0.85) * 0.4
       : rawTasa;
+  if (!hasPoissonModel) {
+    const focusedAttackStrength =
+      ctx?.teamFocus === "home"
+        ? readFiniteNumber(ctx?.home_attack_strength, ctx?.model_home_attack_strength)
+        : ctx?.teamFocus === "away"
+          ? readFiniteNumber(ctx?.away_attack_strength, ctx?.model_away_attack_strength)
+          : averageFinite(
+              readFiniteNumber(ctx?.home_attack_strength, ctx?.model_home_attack_strength),
+              readFiniteNumber(ctx?.away_attack_strength, ctx?.model_away_attack_strength)
+            );
+    if (Number.isFinite(focusedAttackStrength)) {
+      tasa = clamp(tasa * 0.75 + focusedAttackStrength * 0.25, 0.1, 0.9);
+    }
+  }
   const G = tasa >= 0.68 ? 7 : tasa >= 0.55 ? 5 : tasa >= 0.42 ? 3 : 1;
 
   const bajas = (ctx?.lesiones || []).filter((entry) => ["out", "doubtful"].includes(entry.status)).length;
@@ -596,7 +852,44 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
     (betSide === "over" && Number.isFinite(h2hOver25Rate) && h2hOver25Rate >= 0.60) ||
     (betSide === "under" && Number.isFinite(h2hOver25Rate) && h2hOver25Rate <= 0.35);
   if (h2hAligned) senales += 1;
-  const J = senales >= 3 ? 8 : senales === 2 ? 5 : senales === 1 ? 2 : 0;
+  const combinedBtts = averageFinite(ctx?.home_btts_rate, ctx?.away_btts_rate, ctx?.h2h_btts_rate, ctx?.model_btts_rate);
+  const combinedOver25 = averageFinite(ctx?.home_over25_rate, ctx?.away_over25_rate, ctx?.h2h_over25_rate);
+  const isGoalTotalMarket = mercado === "Totals" || mercado === "Totals HT" || String(mercado).includes("Team Total");
+
+  if (isGoalTotalMarket) {
+    if (apiSportsUnderOverAligns(ctx, betSide)) {
+      senales += 1;
+    }
+    if (
+      betSide === "over" &&
+      (
+        (Number.isFinite(combinedBtts) && combinedBtts >= 0.58) ||
+        (Number.isFinite(combinedOver25) && combinedOver25 >= 0.58)
+      )
+    ) {
+      senales += 1;
+    }
+    if (betSide === "under" && Number.isFinite(combinedOver25) && combinedOver25 <= 0.30) {
+      senales += 1;
+    }
+  }
+
+  if (mercado === "ML" || mercado === "Spread" || mercado === "Spread HT") {
+    const focusedShotsOnTarget =
+      ctx?.teamFocus === "home" ? readFiniteNumber(ctx?.home_shots_on_target) : ctx?.teamFocus === "away" ? readFiniteNumber(ctx?.away_shots_on_target) : null;
+    const rivalShotsOnTarget =
+      ctx?.teamFocus === "home" ? readFiniteNumber(ctx?.away_shots_on_target) : ctx?.teamFocus === "away" ? readFiniteNumber(ctx?.home_shots_on_target) : null;
+    if (
+      Number.isFinite(focusedShotsOnTarget) &&
+      Number.isFinite(rivalShotsOnTarget) &&
+      rivalShotsOnTarget > 0 &&
+      focusedShotsOnTarget / rivalShotsOnTarget >= 1.4
+    ) {
+      senales += 1;
+    }
+  }
+
+  const J = senales >= 4 ? 8 : senales === 3 ? 6 : senales === 2 ? 4 : senales === 1 ? 2 : 0;
 
   const total = A + B + C + D + E + F + G + H + I + J;
 
@@ -624,17 +917,18 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
   };
 }
 
-function esVerde(ev, odds, conf, bajas, senalDoble, mercado) {
+function esVerde(ev, odds, conf, bajas, senalDoble, mercado, ctx = null) {
+  if (!hasRealDataForPick(ctx)) return false;
   const isFirstHalf = String(mercado).includes("HT");
-  const evMin = mercado === "Double Chance" ? 0.04 : FOOTBALL_EV_MIN;
+  const evMin = mercado === "Double Chance" ? 0.04 : FOOTBALL_EV_VERDE;
   let threshold =
     mercado === "Double Chance"
       ? senalDoble
-        ? 52
-        : Math.max(FOOTBALL_MIN_CONF - 5, 55)
+        ? FOOTBALL_VERDE_CONF_MIN
+        : FOOTBALL_VERDE_CONF_MIN
       : senalDoble
-        ? Math.max(FOOTBALL_MIN_CONF - 4, 52)
-        : FOOTBALL_MIN_CONF;
+        ? FOOTBALL_VERDE_CONF_MIN
+        : FOOTBALL_VERDE_CONF_MIN;
 
   // Un value-bet puro con EV alto no debe quedarse fuera por 2-7 puntos
   // de confianza cuando el mercado ya valida la ineficiencia.
@@ -642,7 +936,7 @@ function esVerde(ev, odds, conf, bajas, senalDoble, mercado) {
   else if (ev >= 0.06) threshold -= 4;
   if (isFirstHalf && ev >= 0.05) threshold -= 2;
 
-  threshold = Math.max(threshold, FOOTBALL_RECOMMENDATION_CONF_MIN);
+  threshold = Math.max(threshold, FOOTBALL_VERDE_CONF_MIN, FOOTBALL_RECOMMENDATION_CONF_MIN);
   return (
     ev >= evMin &&
     odds >= FOOTBALL_MIN_ODDS &&
@@ -652,20 +946,21 @@ function esVerde(ev, odds, conf, bajas, senalDoble, mercado) {
   );
 }
 
-function esAmarillo(ev, odds, conf, bajas, senalDoble, mercado) {
+function esAmarillo(ev, odds, conf, bajas, senalDoble, mercado, ctx = null) {
+  if (!hasRealDataForPick(ctx)) return false;
   const isFirstHalf = String(mercado).includes("HT");
-  const evMin = mercado === "Double Chance" ? 0.04 : FOOTBALL_EV_YELLOW;
-  let threshold = mercado === "Double Chance" ? (senalDoble ? 45 : 48) : senalDoble ? 45 : 50;
+  const evMin = mercado === "Double Chance" ? 0.04 : FOOTBALL_EV_AMARILLO;
+  let threshold = FOOTBALL_AMARILLO_CONF_MIN;
   if (ev >= 0.06) threshold -= 3;
   if (isFirstHalf && ev >= 0.05) threshold -= 2;
-  threshold = Math.max(threshold, mercado === "Double Chance" ? 43 : 45);
+  threshold = Math.max(threshold, FOOTBALL_AMARILLO_CONF_MIN);
   return (
     ev >= evMin &&
     odds >= FOOTBALL_MIN_ODDS &&
     odds <= FOOTBALL_MAX_ODDS &&
     conf >= threshold &&
     bajas < 3 &&
-    !esVerde(ev, odds, conf, bajas, senalDoble, mercado)
+    !esVerde(ev, odds, conf, bajas, senalDoble, mercado, ctx)
   );
 }
 
@@ -718,35 +1013,40 @@ function ingestOddsMultiEntry(oddsMap, entry) {
 }
 
 function formatSeleccion(mercado, betSide, hdp, evento) {
-  const labels = {
-    ML: { home: `${evento.home} gana`, draw: "Empate", away: `${evento.away} gana` },
-    "Double Chance": {
-      "1X": `${evento.home} gana o empata`,
-      X2: `${evento.away} gana o empata`,
-      "12": "No hay empate",
-    },
-    Totals: {
-      over: `(+) Mas de ${hdp} Goles`,
-      under: `(-) Menos de ${hdp} Goles`,
-      home: `Totales ${hdp} Goles`,
-      away: `Totales ${hdp} Goles`,
-    },
-    "Totals HT": {
-      over: `(+) Mas de ${hdp} Goles 1a mitad`,
-      under: `(-) Menos de ${hdp} Goles 1a mitad`,
-    },
-    Spread: { home: `${evento.home} -${Math.abs(hdp)}`, away: `${evento.away} +${Math.abs(hdp)}` },
-    "Spread HT": {
-      home: `${evento.home} 1a mitad ${formatFootballSignedLine(hdp) || hdp || ""}`.trim(),
-      away: `${evento.away} 1a mitad ${formatFootballSignedLine(hdp) || hdp || ""}`.trim(),
-    },
-    "Corners Totals": { over: `(+) Mas de ${hdp} Corners`, under: `(-) Menos de ${hdp} Corners` },
-    "Corners Totals HT": { over: `(+) Mas de ${hdp} Corners 1a mitad`, under: `(-) Menos de ${hdp} Corners 1a mitad` },
-    "Bookings Totals": { over: `(+) Mas de ${hdp} Tarjetas`, under: `(-) Menos de ${hdp} Tarjetas` },
-    "Team Total Home": { over: `${evento.home} (+) Mas de ${hdp}`, under: `${evento.home} (-) Menos de ${hdp}` },
-    "Team Total Away": { over: `${evento.away} (+) Mas de ${hdp}`, under: `${evento.away} (-) Menos de ${hdp}` },
-  };
-  return labels[mercado]?.[betSide] || `${mercado} ${betSide}`;
+  if (mercado === "ML") {
+    if (betSide === "home") return `${evento.home} gana el partido`;
+    if (betSide === "away") return `${evento.away} gana el partido`;
+    if (betSide === "draw") return "Empate al final del partido";
+  }
+
+  if (mercado === "Double Chance") {
+    if (betSide === "1X") return `${evento.home} gana o empata (doble oportunidad)`;
+    if (betSide === "X2") return `${evento.away} gana o empata (doble oportunidad)`;
+    if (betSide === "12") return "Gana cualquiera de los dos equipos, sin empate";
+  }
+
+  if (mercado === "Totals") return formatFootballOverUnderSelection(betSide, hdp, "goles", "partido");
+  if (mercado === "Totals HT") return formatFootballOverUnderSelection(betSide, hdp, "goles", "1a mitad");
+  if (mercado === "Corners Totals") return formatFootballOverUnderSelection(betSide, hdp, "corners", "partido");
+  if (mercado === "Corners Totals HT") return formatFootballOverUnderSelection(betSide, hdp, "corners", "1a mitad");
+  if (mercado === "Bookings Totals") return formatFootballOverUnderSelection(betSide, hdp, "tarjetas", "partido");
+
+  if (mercado === "Spread" && betSide === "home") {
+    return formatFootballHandicapSelection(evento.home, evento.away, hdp, "goles", "partido");
+  }
+  if (mercado === "Spread" && betSide === "away") {
+    return formatFootballHandicapSelection(evento.away, evento.home, hdp, "goles", "partido");
+  }
+  if (mercado === "Spread HT" && betSide === "home") {
+    return formatFootballHandicapSelection(evento.home, evento.away, hdp, "goles", "1a mitad");
+  }
+  if (mercado === "Spread HT" && betSide === "away") {
+    return formatFootballHandicapSelection(evento.away, evento.home, hdp, "goles", "1a mitad");
+  }
+  if (mercado === "Team Total Home") return formatFootballTeamTotalSelection(evento.home, betSide, hdp, "goles");
+  if (mercado === "Team Total Away") return formatFootballTeamTotalSelection(evento.away, betSide, hdp, "goles");
+
+  return `${mercado} ${betSide}${hdp != null ? ` linea ${formatFootballLineValue(hdp)}` : ""}`.trim();
 }
 
 function formatFootballSignedLine(value) {
@@ -755,84 +1055,142 @@ function formatFootballSignedLine(value) {
   return `${number > 0 ? "+" : ""}${number}`;
 }
 
+function formatFootballLineValue(value) {
+  const number = Number.parseFloat(value);
+  if (!Number.isFinite(number)) return value == null ? "" : String(value).trim();
+  return String(number);
+}
+
 function footballTeamBySide(evento, betSide) {
   if (betSide === "home") return evento.home;
   if (betSide === "away") return evento.away;
   return null;
 }
 
+function footballOpponentBySide(evento, betSide) {
+  if (betSide === "home") return evento.away;
+  if (betSide === "away") return evento.home;
+  return null;
+}
+
+function footballPeriodLabel(period) {
+  return period === "1a mitad" ? "en la 1a mitad" : "en el partido";
+}
+
+function formatFootballOverUnderSelection(betSide, line, unit, period = "partido") {
+  const lineText = formatFootballLineValue(line) || "la linea";
+  const periodText = footballPeriodLabel(period);
+  if (betSide === "over") return `Mas de ${lineText} ${unit} ${periodText}`;
+  if (betSide === "under") return `Menos de ${lineText} ${unit} ${periodText}`;
+  return `Total de ${unit} ${periodText}: linea ${lineText}`;
+}
+
+function formatFootballTeamTotalSelection(team, betSide, line, unit = "goles") {
+  const lineText = formatFootballLineValue(line) || "la linea";
+  if (betSide === "over") return `${team}: mas de ${lineText} ${unit}`;
+  if (betSide === "under") return `${team}: menos de ${lineText} ${unit}`;
+  return `${team}: total de ${unit}, linea ${lineText}`;
+}
+
+function formatFootballHandicapSelection(team, opponent, line, unit, period = "partido") {
+  const number = Number.parseFloat(line);
+  const signedLine = formatFootballSignedLine(line) || formatFootballLineValue(line);
+  const periodText = footballPeriodLabel(period);
+  const rival = opponent || "el rival";
+  const rivalTarget = opponent ? `a ${opponent}` : "al rival";
+
+  if (!Number.isFinite(number)) {
+    const comparison = unit === "goles" ? "marcador" : `conteo de ${unit}`;
+    return `${team}: debe quedar por delante en el ${comparison} ${periodText} contra ${rival}. Linea no informada.`;
+  }
+
+  if (number < 0) {
+    const absLine = Math.abs(number);
+    const needed = Math.floor(absLine) + 1;
+    const pushText = Number.isInteger(absLine)
+      ? ` Si gana por ${formatFootballLineValue(absLine)}, se devuelve.`
+      : "";
+    return `${team} ${signedLine} ${unit}: necesita superar ${rivalTarget} por ${needed}+ ${unit} ${periodText}.${pushText}`;
+  }
+
+  if (number > 0) {
+    const absLine = Math.abs(number);
+    if (Number.isInteger(absLine)) {
+      const maxLoss = Math.max(0, absLine - 1);
+      if (maxLoss === 0) {
+        return `${team} ${signedLine} ${unit}: gana si supera o empata contra ${rival} ${periodText}. Si pierde por ${formatFootballLineValue(absLine)}, se devuelve.`;
+      }
+      return `${team} ${signedLine} ${unit}: gana si supera, empata o pierde contra ${rival} por ${formatFootballLineValue(maxLoss)} ${unit} o menos ${periodText}. Si pierde por ${formatFootballLineValue(absLine)}, se devuelve.`;
+    }
+    return `${team} ${signedLine} ${unit}: gana si supera, empata o pierde contra ${rival} por menos de ${formatFootballLineValue(absLine)} ${unit} ${periodText}.`;
+  }
+
+  return `${team} 0 ${unit}: necesita superar ${rivalTarget} ${periodText}; empate en ${unit} devuelve la apuesta.`;
+}
+
 function formatFootballSelection(mercado, betSide, hdp, evento) {
   const team = footballTeamBySide(evento, betSide);
-  const signedLine = formatFootballSignedLine(hdp);
+  const opponent = footballOpponentBySide(evento, betSide);
 
   if (mercado === "ML") {
-    if (betSide === "draw") return "Empate";
+    if (betSide === "draw") return "Empate al final del partido";
     if (team) return `${team} gana el partido`;
   }
 
   if (mercado === "Double Chance") {
-    if (betSide === "1X") return `${evento.home} gana o empata`;
-    if (betSide === "X2") return `${evento.away} gana o empata`;
-    if (betSide === "12") return "No hay empate (gana alguno)";
+    if (betSide === "1X") return `${evento.home} gana o empata (doble oportunidad)`;
+    if (betSide === "X2") return `${evento.away} gana o empata (doble oportunidad)`;
+    if (betSide === "12") return "Gana cualquiera de los dos equipos, sin empate";
     return `Double Chance ${betSide}`;
   }
 
   if (mercado === "Totals") {
-    if (betSide === "over") return `(+) Mas de ${hdp} goles en el partido`;
-    if (betSide === "under") return `(-) Menos de ${hdp} goles en el partido`;
-    return `Totales ${hdp != null ? hdp : ""} goles en el partido`.replace(/\s+/g, " ").trim();
+    return formatFootballOverUnderSelection(betSide, hdp, "goles", "partido");
   }
 
   if (mercado === "Totals HT") {
-    if (betSide === "over") return `(+) Mas de ${hdp} goles en la 1a mitad`;
-    if (betSide === "under") return `(-) Menos de ${hdp} goles en la 1a mitad`;
-    return `Totales ${hdp != null ? hdp : ""} goles en la 1a mitad`.replace(/\s+/g, " ").trim();
+    return formatFootballOverUnderSelection(betSide, hdp, "goles", "1a mitad");
   }
 
   if (mercado === "Spread" && team) {
-    return `Handicap ${team} ${signedLine || hdp || ""}`.trim();
+    return formatFootballHandicapSelection(team, opponent, hdp, "goles", "partido");
   }
 
   if (mercado === "Spread HT" && team) {
-    return `Handicap 1a mitad ${team} ${signedLine || hdp || ""}`.trim();
+    return formatFootballHandicapSelection(team, opponent, hdp, "goles", "1a mitad");
   }
 
   if (mercado === "Corners Totals") {
-    if (betSide === "over") return `(+) Mas de ${hdp} corners en el partido`;
-    if (betSide === "under") return `(-) Menos de ${hdp} corners en el partido`;
+    if (betSide === "over" || betSide === "under") return formatFootballOverUnderSelection(betSide, hdp, "corners", "partido");
     // Some feeds mislabel total-corners sides as home/away; avoid inventing a team-total pick.
-    if (team) return `Total de corners en el partido${hdp != null ? ` (${hdp})` : ""}`;
+    if (team) return `Total de corners en el partido: linea ${formatFootballLineValue(hdp) || "sin linea"}`;
   }
 
   if (mercado === "Corners Totals HT") {
-    if (betSide === "over") return `(+) Mas de ${hdp} corners en la 1a mitad`;
-    if (betSide === "under") return `(-) Menos de ${hdp} corners en la 1a mitad`;
-    if (team) return `Total de corners en la 1a mitad${hdp != null ? ` (${hdp})` : ""}`;
+    if (betSide === "over" || betSide === "under") return formatFootballOverUnderSelection(betSide, hdp, "corners", "1a mitad");
+    if (team) return `Total de corners en la 1a mitad: linea ${formatFootballLineValue(hdp) || "sin linea"}`;
   }
 
   if (mercado === "Bookings Totals") {
-    if (betSide === "over") return `(+) Mas de ${hdp} tarjetas en el partido`;
-    if (betSide === "under") return `(-) Menos de ${hdp} tarjetas en el partido`;
+    if (betSide === "over" || betSide === "under") return formatFootballOverUnderSelection(betSide, hdp, "tarjetas", "partido");
     // Some feeds mislabel total-bookings sides as home/away; avoid inventing a team-total pick.
-    if (team) return `Total de tarjetas en el partido${hdp != null ? ` (${hdp})` : ""}`;
+    if (team) return `Total de tarjetas en el partido: linea ${formatFootballLineValue(hdp) || "sin linea"}`;
   }
 
   if (mercado === "Team Total Home") {
-    if (betSide === "over") return `${evento.home} (+) marca mas de ${hdp} goles`;
-    if (betSide === "under") return `${evento.home} (-) marca menos de ${hdp} goles`;
+    return formatFootballTeamTotalSelection(evento.home, betSide, hdp, "goles");
   }
 
   if (mercado === "Team Total Away") {
-    if (betSide === "over") return `${evento.away} (+) marca mas de ${hdp} goles`;
-    if (betSide === "under") return `${evento.away} (-) marca menos de ${hdp} goles`;
+    return formatFootballTeamTotalSelection(evento.away, betSide, hdp, "goles");
   }
 
   if (mercado === "Corners Spread" && team) {
-    return `Handicap de corners ${team} ${signedLine || hdp || ""}`.trim();
+    return formatFootballHandicapSelection(team, opponent, hdp, "corners", "partido");
   }
 
   if (mercado === "Bookings Spread" && team) {
-    return `Handicap de tarjetas ${team} ${signedLine || hdp || ""}`.trim();
+    return formatFootballHandicapSelection(team, opponent, hdp, "tarjetas", "partido");
   }
 
   return formatSeleccion(mercado, betSide, hdp, evento);
@@ -998,6 +1356,7 @@ function leagueMatchesEntry(evento, entry) {
 }
 
 function getLeagueTier(evento) {
+  if (isSeniorInternationalFriendly(evento)) return 2;
   const matches = (list) => list.some((entry) => leagueMatchesEntry(evento, entry));
   if (matches(TIER1_LEAGUES)) return 3;
   if (matches(TIER2_LEAGUES)) return 2;
@@ -1024,6 +1383,7 @@ function hasFootballEspnContext(evento, espnStats = {}) {
 
 function shouldIncludeFootballEvent(evento, espnStats = {}, valueBetCount = 0) {
   if (isYouthOrExcludedEvent(evento)) return false;
+  if (isSeniorInternationalFriendly(evento)) return true;
   return isTopLeague(evento);
 }
 
@@ -1083,18 +1443,48 @@ function resolveFootballContext(baseCtx, mercado, betSide) {
     goles_favor_equipo:
       teamFocus === "home" ? adjustedHomeGoals : teamFocus === "away" ? adjustedAwayGoals : (adjustedHomeGoals + adjustedAwayGoals) / 2,
     expected_goals: adjustedExpectedGoals,
+    lambda_home: baseCtx?.lambda_home ?? baseCtx?.model_goals_home ?? null,
+    lambda_away: baseCtx?.lambda_away ?? baseCtx?.model_goals_away ?? null,
     expected_corners_total: baseCtx?.expected_corners_total ?? null,
     expected_cards_total: baseCtx?.expected_cards_total ?? null,
     home_corners_for: baseCtx?.home_corners_for ?? null,
     away_corners_for: baseCtx?.away_corners_for ?? null,
+    home_corners_against: baseCtx?.home_corners_against ?? null,
+    away_corners_against: baseCtx?.away_corners_against ?? null,
     home_cards_for: baseCtx?.home_cards_for ?? null,
     away_cards_for: baseCtx?.away_cards_for ?? null,
+    home_cards_against: baseCtx?.home_cards_against ?? null,
+    away_cards_against: baseCtx?.away_cards_against ?? null,
     home_shots_for: baseCtx?.home_shots_for ?? null,
     away_shots_for: baseCtx?.away_shots_for ?? null,
+    home_shots_on_target: baseCtx?.home_shots_on_target ?? null,
+    away_shots_on_target: baseCtx?.away_shots_on_target ?? null,
+    home_goals_against: baseCtx?.home_goals_against ?? null,
+    away_goals_against: baseCtx?.away_goals_against ?? null,
+    home_season_goals_against: baseCtx?.home_season_goals_against ?? null,
+    away_season_goals_against: baseCtx?.away_season_goals_against ?? null,
+    home_btts_rate: baseCtx?.home_btts_rate ?? null,
+    away_btts_rate: baseCtx?.away_btts_rate ?? null,
+    model_btts_rate: baseCtx?.model_btts_rate ?? null,
+    home_over25_rate: baseCtx?.home_over25_rate ?? null,
+    away_over25_rate: baseCtx?.away_over25_rate ?? null,
+    home_win_rate_home: baseCtx?.home_win_rate_home ?? null,
+    away_win_rate_away: baseCtx?.away_win_rate_away ?? null,
+    home_attack_strength: baseCtx?.home_attack_strength ?? baseCtx?.model_home_attack_strength ?? null,
+    away_attack_strength: baseCtx?.away_attack_strength ?? baseCtx?.model_away_attack_strength ?? null,
+    home_defence_strength: baseCtx?.home_defence_strength ?? baseCtx?.model_home_defence_strength ?? null,
+    away_defence_strength: baseCtx?.away_defence_strength ?? baseCtx?.model_away_defence_strength ?? null,
+    home_recent_matches: baseCtx?.home_recent_matches ?? [],
+    away_recent_matches: baseCtx?.away_recent_matches ?? [],
     h2h_market_label: baseCtx?.h2h_market_label || null,
+    h2h_home_win_rate: baseCtx?.h2h_home_win_rate ?? baseCtx?.model_h2h_home_rate ?? null,
+    h2h_draw_rate: baseCtx?.h2h_draw_rate ?? baseCtx?.model_h2h_draw_rate ?? null,
+    h2h_away_win_rate: baseCtx?.h2h_away_win_rate ?? baseCtx?.model_h2h_away_rate ?? null,
     h2h_over25_rate: baseCtx?.h2h_over25_rate ?? null,
     h2h_btts_rate: baseCtx?.h2h_btts_rate ?? null,
     h2h_avg_goals: baseCtx?.h2h_avg_goals ?? null,
+    api_sports_under_over: baseCtx?.api_sports_under_over ?? baseCtx?.model_under_over ?? null,
+    api_sports_has_predictions: Boolean(baseCtx?.api_sports_has_predictions),
     lineup_confirmed: Boolean(baseCtx?.lineup_confirmed),
     home_lineup_confirmed: Boolean(baseCtx?.home_lineup_confirmed),
     away_lineup_confirmed: Boolean(baseCtx?.away_lineup_confirmed),
@@ -1124,8 +1514,20 @@ function buildFallbackFootballCtx(evento) {
     goles_favor_away: awayGoalsFor,
     home_goals_for: homeGoalsFor,
     away_goals_for: awayGoalsFor,
+    home_goals_against: topLeague ? 1.15 : 1.3,
+    away_goals_against: topLeague ? 1.35 : 1.45,
+    home_season_goals_against: null,
+    away_season_goals_against: null,
+    home_btts_rate: null,
+    away_btts_rate: null,
+    home_over25_rate: null,
+    away_over25_rate: null,
     home_win_rate: topLeague ? 0.46 : 0.42,
     away_win_rate: topLeague ? 0.31 : 0.28,
+    home_win_rate_home: topLeague ? 0.5 : 0.44,
+    away_win_rate_away: topLeague ? 0.3 : 0.28,
+    home_recent_matches: [],
+    away_recent_matches: [],
     posicion: topLeague ? 8 : 10,
     home_posicion: topLeague ? 8 : 10,
     away_posicion: topLeague ? 10 : 11,
@@ -1170,25 +1572,139 @@ async function loadESPNSoccerStats(eventosHoy, date) {
   return stats;
 }
 
+function hasFootballCtxValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.trim() !== "";
+  return value != null;
+}
+
 function mergeFootballSupportContext(baseCtx, apiSportsInsight) {
   if (!apiSportsInsight) return baseCtx;
 
-  const source = baseCtx?.__source && baseCtx.__source !== "priors"
-    ? `${baseCtx.__source} + api-sports-football`
-    : "api-sports-football";
-
-  return {
-    ...baseCtx,
-    ...(apiSportsInsight.ctx || {}),
-    __source: source,
-    __insight: {
-      ...(baseCtx?.__insight || {}),
-      stadium: apiSportsInsight.stadium || baseCtx?.__insight?.stadium || null,
-      referee: apiSportsInsight.referee || baseCtx?.__insight?.referee || null,
-      status: apiSportsInsight.status || baseCtx?.__insight?.status || null,
-      lineups: apiSportsInsight.lineups || baseCtx?.__insight?.lineups || null,
-    },
+  const apiCtx = apiSportsInsight.ctx || {};
+  const baseSource = String(baseCtx?.__source || baseCtx?.source || "priors");
+  const baseIsPriors = baseSource === "priors";
+  const source = baseIsPriors ? "api-sports-football" : `${baseSource} + api-sports-football`;
+  const apiMapped = {
+    ...apiCtx,
+    lambda_home: apiCtx.model_goals_home ?? apiCtx.lambda_home ?? null,
+    lambda_away: apiCtx.model_goals_away ?? apiCtx.lambda_away ?? null,
+    home_goals_for: apiCtx.model_home_goals_for ?? apiCtx.home_goals_for ?? null,
+    away_goals_for: apiCtx.model_away_goals_for ?? apiCtx.away_goals_for ?? null,
+    goles_favor_local: apiCtx.model_home_goals_for ?? apiCtx.goles_favor_local ?? null,
+    goles_favor_away: apiCtx.model_away_goals_for ?? apiCtx.goles_favor_away ?? null,
+    home_goals_against: apiCtx.model_home_goals_against ?? apiCtx.home_goals_against ?? null,
+    away_goals_against: apiCtx.model_away_goals_against ?? apiCtx.away_goals_against ?? null,
+    home_attack_strength: apiCtx.model_home_attack_strength ?? apiCtx.home_attack_strength ?? null,
+    away_attack_strength: apiCtx.model_away_attack_strength ?? apiCtx.away_attack_strength ?? null,
+    home_defence_strength: apiCtx.model_home_defence_strength ?? apiCtx.home_defence_strength ?? null,
+    away_defence_strength: apiCtx.model_away_defence_strength ?? apiCtx.away_defence_strength ?? null,
+    h2h_home_win_rate: apiCtx.model_h2h_home_rate ?? apiCtx.h2h_home_win_rate ?? null,
+    h2h_draw_rate: apiCtx.model_h2h_draw_rate ?? apiCtx.h2h_draw_rate ?? null,
+    h2h_away_win_rate: apiCtx.model_h2h_away_rate ?? apiCtx.h2h_away_win_rate ?? null,
+    api_sports_under_over: apiCtx.model_under_over ?? apiCtx.api_sports_under_over ?? null,
+    api_sports_has_predictions: Boolean(apiCtx.api_sports_has_predictions),
+    model_under_over: apiCtx.model_under_over ?? null,
+    model_btts_rate: apiCtx.model_btts_rate ?? null,
   };
+
+  const merged = { ...baseCtx, __source: source };
+  const copyKeys = [
+    "model_home_prob",
+    "model_draw_prob",
+    "model_away_prob",
+    "model_goals_home",
+    "model_goals_away",
+    "expected_goals",
+    "lambda_home",
+    "lambda_away",
+    "home_goals_for",
+    "away_goals_for",
+    "goles_favor_local",
+    "goles_favor_away",
+    "home_goals_against",
+    "away_goals_against",
+    "home_season_goals_against",
+    "away_season_goals_against",
+    "home_attack_strength",
+    "away_attack_strength",
+    "home_defence_strength",
+    "away_defence_strength",
+    "home_btts_rate",
+    "away_btts_rate",
+    "model_btts_rate",
+    "home_over25_rate",
+    "away_over25_rate",
+    "home_win_rate",
+    "away_win_rate",
+    "home_win_rate_home",
+    "away_win_rate_away",
+    "home_recent_matches",
+    "away_recent_matches",
+    "forma",
+    "home_forma",
+    "away_forma",
+    "h2h_home_win_rate",
+    "h2h_draw_rate",
+    "h2h_away_win_rate",
+    "h2h_over25_rate",
+    "h2h_btts_rate",
+    "h2h_avg_goals",
+    "h2h_market_label",
+    "expected_corners_total",
+    "expected_cards_total",
+    "home_corners_for",
+    "away_corners_for",
+    "home_corners_against",
+    "away_corners_against",
+    "home_cards_for",
+    "away_cards_for",
+    "home_cards_against",
+    "away_cards_against",
+    "home_shots_on_target",
+    "away_shots_on_target",
+    "api_sports_under_over",
+    "api_sports_has_predictions",
+    "model_under_over",
+    "posicion",
+    "home_posicion",
+    "away_posicion",
+    "total_equipos",
+    "home_season_ppg",
+    "away_season_ppg",
+    "home_venue_advantage",
+    "home_gamma",
+  ];
+
+  for (const key of copyKeys) {
+    const baseValue = baseCtx?.[key];
+    const apiValue = apiMapped?.[key];
+    merged[key] = !baseIsPriors && hasFootballCtxValue(baseValue)
+      ? baseValue
+      : hasFootballCtxValue(apiValue)
+        ? apiValue
+        : baseValue ?? null;
+  }
+
+  merged.lineup_confirmed = Boolean(baseCtx?.lineup_confirmed || apiCtx.lineup_confirmed);
+  merged.home_lineup_confirmed = Boolean(baseCtx?.home_lineup_confirmed || apiCtx.home_lineup_confirmed);
+  merged.away_lineup_confirmed = Boolean(baseCtx?.away_lineup_confirmed || apiCtx.away_lineup_confirmed);
+  merged.fixture_status = apiCtx.fixture_status || baseCtx?.fixture_status || null;
+  merged.fixture_status_label = apiCtx.fixture_status_label || baseCtx?.fixture_status_label || null;
+  merged.lesiones = Array.isArray(baseCtx?.lesiones) && baseCtx.lesiones.length ? baseCtx.lesiones : (apiCtx.lesiones || []);
+  merged.home_lesiones = Array.isArray(baseCtx?.home_lesiones) && baseCtx.home_lesiones.length ? baseCtx.home_lesiones : (apiCtx.home_lesiones || []);
+  merged.away_lesiones = Array.isArray(baseCtx?.away_lesiones) && baseCtx.away_lesiones.length ? baseCtx.away_lesiones : (apiCtx.away_lesiones || []);
+  merged.__insight = {
+    ...(baseCtx?.__insight || {}),
+    stadium: apiSportsInsight.stadium || baseCtx?.__insight?.stadium || null,
+    referee: apiSportsInsight.referee || baseCtx?.__insight?.referee || null,
+    status: apiSportsInsight.status || baseCtx?.__insight?.status || null,
+    lineups: apiSportsInsight.lineups || baseCtx?.__insight?.lineups || null,
+  };
+
+  return merged;
 }
 
 function mercadoToType(mercado) {
@@ -1399,14 +1915,14 @@ export async function analyzeFootballSlate(dateStr) {
           href: vb.bookmakerOdds?.href || null,
         };
 
-        if (Number.isFinite(ev) && esVerde(ev, sc.bestOdds, sc.total, sc.bajasTitulares, sc.senalDoble, mercado)) {
+        if (Number.isFinite(ev) && esVerde(ev, sc.bestOdds, sc.total, sc.bajasTitulares, sc.senalDoble, mercado, ctx)) {
           pick.estado = "verde";
           pick.valueBetApplied = true;
           picks.push(pick);
-        } else if (Number.isFinite(ev) && esAmarillo(ev, sc.bestOdds, sc.total, sc.bajasTitulares, sc.senalDoble, mercado)) {
+        } else if (Number.isFinite(ev) && esAmarillo(ev, sc.bestOdds, sc.total, sc.bajasTitulares, sc.senalDoble, mercado, ctx)) {
           pick.estado = "amarillo";
           picks.push(pick);
-        } else {
+        } else if (sc.total >= FOOTBALL_DISPLAY_CONF_MIN && hasRealDataForPick(ctx)) {
           sin_valor.push({
             mercado,
             market: mercado,
@@ -1489,10 +2005,14 @@ export async function analyzeFootballSlate(dateStr) {
       try {
         const pro = await enrichFootballPartidoWithPro(input);
         const { _proInput, ...rest } = partido;
+        const proPicks = Array.isArray(pro.picks) ? pro.picks : [];
+        const proSinValor = Array.isArray(pro.sin_valor) ? pro.sin_valor : [];
+        const bettablePicks = proPicks.filter((pick) => pick?.estado === "verde" || pick?.estado === "amarillo");
+        const downgradedPicks = proPicks.filter((pick) => pick?.estado !== "verde" && pick?.estado !== "amarillo");
         return {
           ...rest,
-          picks: pro.picks,
-          sin_valor: pro.sin_valor,
+          picks: bettablePicks,
+          sin_valor: [...proSinValor, ...downgradedPicks],
           lineMovementInput: pro.lineMovementInput,
           lineMovementMl: pro.lineMovementMl,
         };
@@ -1678,7 +2198,7 @@ function adaptParlayForUi(parlay) {
 
 function buildFootballUnavailableAnalysis(date, reason) {
   return {
-    app: "Tennis Oracle",
+    app: "DANNY PICK",
     module: "Football Desk",
     sport: "futbol",
     date,
@@ -1769,7 +2289,7 @@ export async function buildFootballAnalysis(date) {
   );
 
   return {
-    app: "Tennis Oracle",
+    app: "DANNY PICK",
     module: "Football Desk",
     sport: "futbol",
     date: result.date,

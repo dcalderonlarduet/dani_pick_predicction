@@ -33,6 +33,23 @@ export const FACTOR_WEIGHTS_NBA_ML = {
   descanso: 0.05,
 };
 
+function readNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function basketballDefenseFactor(defRtg, avgDef) {
+  const defense = readNumber(defRtg, avgDef);
+  const average = readNumber(avgDef, 114) ?? 114;
+  if (!Number.isFinite(defense)) return 1;
+  if (defense < average - 3) return 0.93;
+  if (defense > average + 3) return 1.07;
+  return 1;
+}
+
 export function projectNbaFirstHalfTotal(ctx) {
   const avg = ctx.averages;
   const homePace = ctx.home?.form?.pace ?? avg.pace;
@@ -41,13 +58,15 @@ export function projectNbaFirstHalfTotal(ctx) {
 
   const homeOff = ctx.home?.form?.offRtg1h ?? avg.offRtg;
   const awayOff = ctx.away?.form?.offRtg1h ?? avg.offRtg;
+  const homeDefFactor = basketballDefenseFactor(ctx.away?.form?.defRtg, avg.defRtg);
+  const awayDefFactor = basketballDefenseFactor(ctx.home?.form?.defRtg, avg.defRtg);
   const homeInj = Math.max(0.85, 1 - (ctx.home?.injuryPenalty || 0) / 10);
   const awayInj = Math.max(0.85, 1 - (ctx.away?.injuryPenalty || 0) / 10);
   const homeFatigue = ctx.home?.fatigue?.factor ?? 1;
   const awayFatigue = ctx.away?.fatigue?.factor ?? 1;
 
-  const projectedHome = ((pace * homeOff) / 100) * homeInj * homeFatigue;
-  const projectedAway = ((pace * awayOff) / 100) * awayInj * awayFatigue;
+  const projectedHome = ((pace * homeOff) / 100) * homeDefFactor * homeInj * homeFatigue;
+  const projectedAway = ((pace * awayOff) / 100) * awayDefFactor * awayInj * awayFatigue;
   const formFactor = 1;
   const h2hFactor = ctx.h2h_1h ? ctx.h2h_1h / avg.pts1h : 1;
 
@@ -66,8 +85,8 @@ export function projectNbaTeamTotal(ctx, side) {
   const rival = side === "home" ? ctx.away : ctx.home;
   const pace = ((ctx.home?.form?.pace ?? avg.pace) + (ctx.away?.form?.pace ?? avg.pace)) / 2;
   const offRtg = team?.form?.offRtg1h ?? avg.offRtg;
-  const defRtgRival = rival?.form?.offRtg1h ?? avg.defRtg;
-  const matchup = defRtgRival > avg.defRtg + 3 ? 0.93 : defRtgRival < avg.defRtg - 3 ? 1.07 : 1;
+  const defRtgRival = rival?.form?.defRtg ?? avg.defRtg;
+  const matchup = basketballDefenseFactor(defRtgRival, avg.defRtg);
   const homeAway = side === "home" ? 1.02 : 0.98;
   const fatigue = team?.fatigue?.factor ?? 1;
   const injuryPts = team?.injuryPenalty || 0;
@@ -84,12 +103,13 @@ export function projectNbaGameTotal(ctx) {
     muHome += 1;
     muAway += 1;
   }
-  const h2hMean = Number(ctx.h2h_1h);
+  const h2hMean = Number(ctx.h2h?.averageTotal);
   if (Number.isFinite(h2hMean) && ctx.flags?.h2h_relevante) {
     const targetTotal = h2hMean;
     const current = muHome + muAway;
-    const delta = targetTotal - current;
-    if (Math.abs(delta) <= 4) {
+    const blendedTotal = current * 0.75 + targetTotal * 0.25;
+    const delta = blendedTotal - current;
+    if (Math.abs(targetTotal - current) <= 12) {
       muHome += delta / 2;
       muAway += delta / 2;
     }
@@ -116,9 +136,12 @@ export function projectNbaMoneyline(ctx) {
   const avg = ctx.averages;
   const homeOff = ctx.home?.form?.offRtg1h ?? avg.offRtg;
   const awayOff = ctx.away?.form?.offRtg1h ?? avg.offRtg;
-  const netDiff = homeOff - awayOff + 3.5;
+  const homeDef = ctx.home?.form?.defRtg ?? avg.defRtg;
+  const awayDef = ctx.away?.form?.defRtg ?? avg.defRtg;
+  const netRatingDiff = (homeOff - homeDef) - (awayOff - awayDef);
+  const formDiff = (ctx.home?.form?.ptsPerGame ?? avg.ptsGame / 2) - (ctx.away?.form?.ptsPerGame ?? avg.ptsGame / 2);
   const injuryEdge = (ctx.away?.injuryPenalty || 0) - (ctx.home?.injuryPenalty || 0);
-  const score = netDiff * 0.02 + injuryEdge * 0.03 + 0.035;
+  const score = netRatingDiff * 0.018 + formDiff * 0.006 + injuryEdge * 0.03 + 0.035;
   const probHome = 1 / (1 + Math.exp(-score * 2.5));
   return {
     probHome,

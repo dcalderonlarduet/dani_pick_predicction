@@ -5,6 +5,7 @@ import {
   fetchApiSportsTeamStatistics,
   matchApiSportsGame,
   parseAmericanFootballTeamStats,
+  parseApiSportsH2hFullTotal,
   parseApiSportsH2hTotals,
 } from "./shared/api-sports-pro.js";
 
@@ -69,6 +70,9 @@ export async function loadApiSportsNflGameInsight({ date, home, away }) {
     away: {
       teamId: awayId,
       form: parseAmericanFootballTeamStats(awayStats),
+    },
+    h2h: {
+      averageTotal: parseApiSportsH2hFullTotal(h2hGames),
     },
     h2h_1h: parseApiSportsH2hTotals(h2hGames, "nfl"),
     flags: {

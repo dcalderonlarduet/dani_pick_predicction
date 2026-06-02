@@ -7,7 +7,7 @@ const MODULES = {
   tennis: {
     key: "tennis",
     label: "Tennis",
-    title: "Tennis Oracle",
+    title: "DANNY PICK",
     status: "live",
     tagline: "ATP, WTA, singles y dobles con motor de factores y capa medica propia.",
     shortNote: "Workspace activo",

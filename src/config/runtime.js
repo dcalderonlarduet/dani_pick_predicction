@@ -34,9 +34,6 @@ export function getRuntimeConfig() {
   return {
     timezone: process.env.APP_TIMEZONE || "Europe/Madrid",
     oddsProvider,
-    communityStack: {
-      enabled: false,
-    },
     oddsApiIo: {
       enabled: oddsProvider === "odds-api-io" || Boolean(process.env.ODDS_API_IO_KEY),
       apiKey: process.env.ODDS_API_IO_KEY || "",
@@ -57,6 +54,10 @@ export function getRuntimeConfig() {
       tournamentSurfaceFile:
         process.env.TOURNAMENT_SURFACES_FILE ||
         path.join(process.cwd(), "src", "data", "tournament-surfaces.json"),
+    },
+    communityStack: {
+      enabled: parseBoolean(process.env.COMMUNITY_STACK_ENABLED, false),
+      oddsharvesterSnapshotFile: process.env.ODDSHARVESTER_SNAPSHOT_FILE || "",
     },
     football: {
       oddsProvider: process.env.FOOTBALL_ODDS_PROVIDER || "odds-api-io",

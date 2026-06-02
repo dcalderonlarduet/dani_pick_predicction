@@ -65,7 +65,7 @@ Estos archivos son estado/runtime y estan ignorados por Git:
 
 ```bash
 docker compose ps
-docker compose logs --tail=120 tennis-oracle
+docker compose logs --tail=120 danny-pick
 npm run start
 ```
 

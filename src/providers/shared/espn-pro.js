@@ -255,13 +255,72 @@ export function parseEspnTeamRecentTotals(schedulePayload, teamId, { limit = 15,
   return totals;
 }
 
-export function parseEspnH2h1h(summary, sport) {
+export function parseEspnTeamRecentScoring(schedulePayload, teamId, { limit = 8 } = {}) {
+  const events = schedulePayload?.events || schedulePayload?.team?.events || [];
+  const pointsFor = [];
+  const pointsAgainst = [];
+  const totals = [];
+
+  for (const event of events) {
+    const status = String(event?.competitions?.[0]?.status?.type?.name || event?.status?.type?.name || "").toLowerCase();
+    if (!/final|post|completed/.test(status)) continue;
+
+    const competitors = event?.competitions?.[0]?.competitors || [];
+    const mine = competitors.find((row) => String(row?.team?.id || row?.id) === String(teamId));
+    const rival = competitors.find((row) => String(row?.team?.id || row?.id) !== String(teamId));
+    if (!mine || !rival) continue;
+
+    const mineScore = Number(mine?.score ?? mine?.team?.score);
+    const rivalScore = Number(rival?.score ?? rival?.team?.score);
+    if (!Number.isFinite(mineScore) || !Number.isFinite(rivalScore)) continue;
+
+    pointsFor.push(mineScore);
+    pointsAgainst.push(rivalScore);
+    totals.push(mineScore + rivalScore);
+    if (pointsFor.length >= limit) break;
+  }
+
+  const average = (values) =>
+    values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+
+  return {
+    pointsFor,
+    pointsAgainst,
+    totals,
+    avgFor: average(pointsFor),
+    avgAgainst: average(pointsAgainst),
+    avgTotal: average(totals),
+    sample: pointsFor.length,
+  };
+}
+
+function espnH2hRows(summary) {
   const meetings =
     summary?.header?.lastFiveMeetings ||
     summary?.pickcenter?.previousGames ||
     summary?.againstTheSpread?.meetings ||
     [];
-  const rows = Array.isArray(meetings) ? meetings : [];
+  return Array.isArray(meetings) ? meetings : [];
+}
+
+export function parseEspnH2hFullTotal(summary) {
+  const rows = espnH2hRows(summary);
+  if (rows.length < 2) return null;
+
+  let sum = 0;
+  let count = 0;
+  for (const row of rows.slice(0, 5)) {
+    const homeScore = Number(row?.homeScore ?? row?.score?.home ?? row?.home?.score);
+    const awayScore = Number(row?.awayScore ?? row?.score?.away ?? row?.away?.score);
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+    sum += homeScore + awayScore;
+    count += 1;
+  }
+  return count >= 2 ? sum / count : null;
+}
+
+export function parseEspnH2h1h(summary, sport) {
+  const rows = espnH2hRows(summary);
   if (rows.length < 2) return null;
 
   let sum = 0;

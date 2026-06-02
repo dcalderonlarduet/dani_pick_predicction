@@ -6,6 +6,7 @@ import {
   fetchApiSportsGames,
   fetchApiSportsTeamStatistics,
   matchApiSportsGame,
+  parseApiSportsH2hFullTotal,
   parseApiSportsH2hTotals,
   parseBasketballTeamStats,
 } from "./shared/api-sports-pro.js";
@@ -73,6 +74,9 @@ export async function loadApiSportsBasketballGameInsight({ date, home, away }) {
     away: {
       teamId: awayId,
       form: parseBasketballTeamStats(awayStats) || inferFromGameStats(statsRows, "away"),
+    },
+    h2h: {
+      averageTotal: parseApiSportsH2hFullTotal(h2hGames),
     },
     h2h_1h: parseApiSportsH2hTotals(h2hGames, "nba"),
     injuries: parseApiSportsInjuries(statsRows),

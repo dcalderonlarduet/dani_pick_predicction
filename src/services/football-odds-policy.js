@@ -429,6 +429,11 @@ export function enrichFootballPickWithProScoring(pick, ctx = {}) {
     estado = "verde";
   } else if (proBettable && color === "amarillo" && (estado === "sin_valor" || estado === "modelo")) {
     estado = "amarillo";
+  } else if (!proBettable && (estado === "verde" || estado === "amarillo")) {
+    estado = "sin_valor";
+    enriched.verdictLabel = valueGates.failures?.includes("data_quality_baja")
+      ? "Sin valor: calidad de datos insuficiente para recomendar."
+      : "Sin valor: no supera las puertas profesionales del mercado.";
   } else if (!proBettable && color === "gris" && enriched.lineTrapActive) {
     estado = "sin_valor";
   }

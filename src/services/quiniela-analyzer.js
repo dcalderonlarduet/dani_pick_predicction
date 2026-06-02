@@ -558,7 +558,7 @@ async function fetchQuinielaPageText(url) {
   const viaJina = url.includes("r.jina.ai/");
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "sports-oracle/quiniela-module",
+      "User-Agent": "danny-pick/quiniela-module",
       Accept: viaJina
         ? "text/plain,text/markdown;q=0.9,*/*;q=0.8"
         : "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
@@ -659,7 +659,7 @@ export async function buildQuinielaAnalysis(date) {
 
   if (!targetOfficial?.rows?.length) {
     return {
-      app: "Tennis Oracle",
+      app: "DANNY PICK",
       module: "Quiniela Desk",
       sport: "quiniela",
       date,
@@ -812,7 +812,7 @@ export async function buildQuinielaAnalysis(date) {
   const lowDataRows = Math.max(0, picks.length - statValueRows);
 
   const result = {
-    app: "Tennis Oracle",
+    app: "DANNY PICK",
     module: "Quiniela Desk",
     sport: "quiniela",
     date: football.date || date,

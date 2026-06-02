@@ -11,8 +11,8 @@ const MIN_CONF_POR_DEPORTE = {
   mlb: 50,
   nba: 55,
   nfl: 52,
-  football: 55,
-  futbol: 55,
+  football: 52,
+  futbol: 52,
 };
 
 export function getMinRecommendationConfidence(sport = "") {

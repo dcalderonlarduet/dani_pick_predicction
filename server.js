@@ -244,7 +244,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/health" && method === "GET") {
       sendJson(res, 200, {
         status: "ok",
-        service: "sports-oracle",
+        service: "danny-pick",
         timestamp: new Date().toISOString(),
         timezone: getAppTimezone(),
         analysisDate: getMadridTodayDateString(),

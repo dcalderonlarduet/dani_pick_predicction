@@ -11,10 +11,13 @@ import {
   leagueAverages,
   matchScoreboardEvent,
   parseEspnH2h1h,
+  parseEspnH2hFullTotal,
   parseEspnRecentForm,
   parseEspnSeasonTeamForm,
   parseInjuryFlags,
 } from "./shared/espn-pro.js";
+import { loadApiSportsBasketballGameInsight } from "./api-sports-basketball.js";
+import { mergeProGameContext } from "./shared/pro-context-merge.js";
 const DEFAULT_LEAGUE_VALUES = {
   pace: 99,
   ptsPerGame: 114,
@@ -169,6 +172,7 @@ async function buildEspnNbaContext({ date, home, away, eventId, events }) {
   }
 
   const h2h1h = parseEspnH2h1h(summary, "nba") ?? avg.pts1h;
+  const h2hFullTotal = parseEspnH2hFullTotal(summary);
   const homeFatigue = computeScheduleFatigue(scoreboard, teams.homeId, teams.startIso);
   const awayFatigue = computeScheduleFatigue(scoreboard, teams.awayId, teams.startIso);
 
@@ -204,6 +208,9 @@ async function buildEspnNbaContext({ date, home, away, eventId, events }) {
     espnWinProb,
     espnWinProbHome: espnWinProb.home != null ? Math.round(espnWinProb.home * 1000) / 10 : null,
     espnWinProbAway: espnWinProb.away != null ? Math.round(espnWinProb.away * 1000) / 10 : null,
+    h2h: {
+      averageTotal: h2hFullTotal,
+    },
     h2h_1h: h2h1h,
     over_rate_home: estimateOverRate(homeForm),
     over_rate_away: estimateOverRate(awayForm),
@@ -254,15 +261,22 @@ function leagueDefaultForm(side, teamId) {
 export async function buildNbaGameContext(params) {
   const espnCtx = await buildEspnNbaContext(params);
   const espnStatsOk =
-    espnCtx?.source_log?.season_stats === "espn" ||
-    espnCtx?.home?.form?.source === "espn-season-stats" ||
+    espnCtx?.home?.form?.source === "espn-season-stats" &&
     espnCtx?.away?.form?.source === "espn-season-stats";
 
-  if (!espnStatsOk && espnCtx?.found) {
+  if (espnStatsOk && espnCtx?.found) return espnCtx;
+
+  const apiCtx = await loadApiSportsBasketballGameInsight({
+    date: params.date,
+    home: params.home,
+    away: params.away,
+  }).catch(() => null);
+
+  if (!apiCtx && !espnStatsOk && espnCtx?.found) {
     console.warn(
-      `[ESPN-NBA] Stats incompletas para ${params.home ?? espnCtx.homeName} vs ${params.away ?? espnCtx.awayName}; usando medias de liga (fallback API-Sports desactivado)`
+      `[ESPN-NBA] Stats incompletas para ${params.home ?? espnCtx.homeName} vs ${params.away ?? espnCtx.awayName}; usando medias de liga (fallback API-Sports no disponible)`
     );
   }
 
-  return espnCtx;
+  return apiCtx ? mergeProGameContext(espnCtx, apiCtx) : espnCtx;
 }

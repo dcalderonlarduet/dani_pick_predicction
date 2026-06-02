@@ -136,11 +136,27 @@ export function parseBasketballTeamStats(response) {
 export function parseAmericanFootballTeamStats(response) {
   const groups = response?.statistics || response?.response?.[0]?.statistics || [];
   const pts = statFromGroups(groups, ["points", "points per game", "scoring"]);
+  const ptsAllowed = statFromGroups(groups, [
+    "points allowed",
+    "points against",
+    "opponent points",
+    "opp points",
+    "points conceded",
+  ]);
   const yards = statFromGroups(groups, ["yards", "total yards"]);
+  const yardsAllowed = statFromGroups(groups, [
+    "yards allowed",
+    "yards against",
+    "opponent yards",
+    "opp yards",
+    "yards conceded",
+  ]);
   if (!pts && !yards) return null;
   return {
     ptsPerGame: pts ?? 22,
+    ptsAllowedPerGame: ptsAllowed ?? null,
     yardsPerGame: yards ?? 330,
+    yardsAllowedPerGame: yardsAllowed ?? null,
     source: "api-sports-american-football",
   };
 }
@@ -169,4 +185,19 @@ export function parseApiSportsH2hTotals(games, sport) {
   }
   if (!count) return null;
   return sum / count;
+}
+
+export function parseApiSportsH2hFullTotal(games) {
+  const rows = Array.isArray(games) ? games : [];
+  if (rows.length < 2) return null;
+  let sum = 0;
+  let count = 0;
+  for (const game of rows.slice(0, 5)) {
+    const home = Number(game?.scores?.home?.total ?? game?.score?.home);
+    const away = Number(game?.scores?.away?.total ?? game?.score?.away);
+    if (!Number.isFinite(home) || !Number.isFinite(away)) continue;
+    sum += home + away;
+    count += 1;
+  }
+  return count >= 2 ? sum / count : null;
 }
