@@ -1,4 +1,4 @@
-import http from "node:http";
+﻿import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,9 @@ import {
   getCachedAnalysisIfAvailable,
   getAnalysisCacheTtlMs,
   invalidateAnalysisCache,
+  loadSnapshotsFromDb,
   peekCachedAnalysis,
+  pruneExpiredDbSnapshots,
 } from "./src/services/analysis-response-cache.js";
 import { isQuinielaPlazoCerrado } from "./src/services/quiniela-official-cache.js";
 import {
@@ -558,10 +560,10 @@ async function prewarmOddsCache() {
     return;
   }
   if (getOddsApiRateLimitState()) {
-    console.log("[prewarm] Saltando — rate limit activo en Odds-API.io.");
+    console.log("[prewarm] Saltando â€” rate limit activo en Odds-API.io.");
     return;
   }
-  // Endpoints ligeros opcionales; el análisis ya calienta cuotas y señales cuando hace falta.
+  // Endpoints ligeros opcionales; el anÃ¡lisis ya calienta cuotas y seÃ±ales cuando hace falta.
   if (PREWARM_ODDS_ENDPOINTS) {
     await Promise.allSettled([
       loadFootballEvents(),
@@ -579,7 +581,7 @@ async function prewarmOddsCache() {
       loadBasketballDroppingOdds(),
       loadAmericanFootballDroppingOdds(),
     ]);
-    console.log("[prewarm] Endpoints base de Odds-API.io actualizados (14 llamadas máx.).");
+    console.log("[prewarm] Endpoints base de Odds-API.io actualizados (14 llamadas mÃ¡x.).");
   }
 
   await prewarmAnalysisCaches();
@@ -591,7 +593,7 @@ async function prewarmAnalysisCaches() {
 
   const modules = [
     { key: `mlb:${prewarmDate}`, build: () => buildMlbAnalysis(prewarmDate), label: "MLB", sport: "mlb" },
-    { key: `futbol:${prewarmDate}`, build: () => buildFootballAnalysis(prewarmDate), label: "Fútbol", sport: "futbol" },
+    { key: `futbol:${prewarmDate}`, build: () => buildFootballAnalysis(prewarmDate), label: "FÃºtbol", sport: "futbol" },
     { key: `nba:${prewarmDate}`, build: () => buildNbaAnalysis(prewarmDate), label: "NBA", sport: "nba" },
     { key: `wnba:${prewarmDate}`, build: () => buildWnbaAnalysis(prewarmDate), label: "WNBA", sport: "wnba" },
     { key: `nfl:${prewarmDate}`, build: () => buildNflAnalysis(prewarmDate), label: "NFL", sport: "nfl" },
@@ -605,9 +607,9 @@ async function prewarmAnalysisCaches() {
   async function prewarmEntry(entry) {
     try {
       await loadAnalysisWithTelegram(entry.key, entry.build, entry.sport, { refresh: false });
-      console.log(`[prewarm] Análisis ${entry.label} en caché (+ notificaciones si hay picks nuevos).`);
+      console.log(`[prewarm] AnÃ¡lisis ${entry.label} en cachÃ© (+ notificaciones si hay picks nuevos).`);
     } catch (err) {
-      console.warn(`[prewarm] ${entry.label} falló:`, err?.message);
+      console.warn(`[prewarm] ${entry.label} fallÃ³:`, err?.message);
     }
   }
 
@@ -627,9 +629,9 @@ async function prewarmAnalysisCaches() {
   if (!quinielaCached?.isFresh) {
     try {
       await loadQuinielaAnalysisCached(prewarmDate, () => buildQuinielaAnalysis(prewarmDate), { refresh: false });
-      console.log("[prewarm] Análisis Quiniela en caché.");
+      console.log("[prewarm] AnÃ¡lisis Quiniela en cachÃ©.");
     } catch (err) {
-      console.warn("[prewarm] Quiniela falló:", err?.message);
+      console.warn("[prewarm] Quiniela fallÃ³:", err?.message);
     }
   }
 }
@@ -685,7 +687,7 @@ async function sendDailySummaryTelegram() {
   const totalResueltos = ganados + perdidos + voids;
 
   if (totalResueltos === 0 && pendientes === 0) {
-    console.log(`[telegram-scheduler] Sin picks para ${yesterday} — no se manda resumen`);
+    console.log(`[telegram-scheduler] Sin picks para ${yesterday} â€” no se manda resumen`);
     return;
   }
 
@@ -724,7 +726,7 @@ function scheduleDailySummary() {
     : 24 * 60 * 60 * 1000;
 
   console.log(
-    `[telegram-scheduler] Próximo resumen diario en ${Math.round(msUntilTarget / 60000)} min (${targetDateKey} 00:05 Madrid)`
+    `[telegram-scheduler] PrÃ³ximo resumen diario en ${Math.round(msUntilTarget / 60000)} min (${targetDateKey} 00:05 Madrid)`
   );
 
   setTimeout(async () => {
@@ -771,7 +773,7 @@ async function runQuinielaResultadosUpdate(date) {
 
     const resultados = await fetchQuinielaResultados(jornada);
     if (!resultados?.length) {
-      console.log("[quiniela-results] Sin resultados disponibles aún");
+      console.log("[quiniela-results] Sin resultados disponibles aÃºn");
       return;
     }
 
@@ -785,7 +787,7 @@ async function runQuinielaResultadosUpdate(date) {
       );
       await notifyQuinielaResultadosTelegram({ jornada, evaluacion });
     } else {
-      console.log(`[quiniela-results] ${evaluacion.pendientes} partidos pendientes aún`);
+      console.log(`[quiniela-results] ${evaluacion.pendientes} partidos pendientes aÃºn`);
     }
   } catch (error) {
     console.error("[quiniela-results] Error:", error.message);
@@ -860,7 +862,7 @@ async function runQuinielaScheduledUpdate() {
     const plazoCerrado = isQuinielaPlazoCerrado(previousAnalysis?.officialSource);
 
     if (plazoCerrado) {
-      console.log("[quiniela-scheduler] Plazo cerrado — actualizando solo resultados");
+      console.log("[quiniela-scheduler] Plazo cerrado â€” actualizando solo resultados");
       await notifyQuinielaPlazoCerradaTelegram({
         jornada: previousAnalysis?.officialSource?.jornadaAnalizada,
         closingTime: previousAnalysis?.officialSource?.closingTime,
@@ -909,7 +911,7 @@ async function runQuinielaScheduledUpdate() {
     );
 
     if (isQuinielaPlazoCerrado(analysis?.officialSource)) {
-      console.log("[quiniela-scheduler] Plazo cerrado tras refresh — congelando pronóstico");
+      console.log("[quiniela-scheduler] Plazo cerrado tras refresh â€” congelando pronÃ³stico");
       await notifyQuinielaPlazoCerradaTelegram({
         jornada: analysis?.officialSource?.jornadaAnalizada,
         closingTime: analysis?.officialSource?.closingTime,
@@ -921,23 +923,23 @@ async function runQuinielaScheduledUpdate() {
 
     const newFingerprint = buildQuinielaPronosticoFingerprint(analysis);
     if (newFingerprint !== previousFingerprint && analysis?.telegramPayload) {
-      console.log("[quiniela-scheduler] Pronóstico cambió — notificando Telegram");
+      console.log("[quiniela-scheduler] PronÃ³stico cambiÃ³ â€” notificando Telegram");
       await notifyQuinielaOfficialProposal({
         ...analysis.telegramPayload,
         isUpdate: true,
       });
     } else {
-      console.log("[quiniela-scheduler] Sin cambios en el pronóstico");
+      console.log("[quiniela-scheduler] Sin cambios en el pronÃ³stico");
     }
   } catch (error) {
-    console.error("[quiniela-scheduler] Error en actualización:", error.message);
+    console.error("[quiniela-scheduler] Error en actualizaciÃ³n:", error.message);
   } finally {
     quinielaSchedulerRunning = false;
   }
 }
 
 server.listen(port, () => {
-  console.log(`Tennis Oracle disponible en http://localhost:${port}`);
+  console.log(`DANY PICKS disponible en http://localhost:${port}`);
   waitForDatabase()
     .then((health) => {
       if (!health.ok) {
@@ -948,9 +950,19 @@ server.listen(port, () => {
       return runPendingMigrations();
     })
     .then((result) => {
-      if (result?.ran) console.log(`[db] ${result.ran} migración(es) aplicada(s).`);
+      if (result?.ran) console.log(`[db] ${result.ran} migraciÃ³n(es) aplicada(s).`);
+      return loadSnapshotsFromDb();
     })
-    .catch((error) => console.warn("[db] Migraciones:", error.message));
+    .catch((error) => console.warn("[db] Arranque:", error.message));
+  setInterval(() => {
+    pruneExpiredDbSnapshots()
+      .then((n) => {
+        if (n > 0) {
+          console.log(`[analysis-cache] ${n} snapshot(s) expirado(s) eliminado(s) de BD.`);
+        }
+      })
+      .catch(() => {});
+  }, 24 * 60 * 60 * 1000);
   setTimeout(() => prewarmOddsCache(), 5_000);
   setInterval(prewarmOddsCache, PREWARM_INTERVAL_MS);
   startPublicSplitsJob();
@@ -967,3 +979,5 @@ server.listen(port, () => {
     });
   }, BACKTEST_RECONCILE_MS);
 });
+
+

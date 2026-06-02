@@ -1,8 +1,10 @@
-import { round } from "../utils/math.js";
+﻿import { round } from "../utils/math.js";
 import { getRuntimeConfig } from "../config/runtime.js";
 import { canonicalName } from "../providers/shared/tennis-normalizers.js";
 
-const { sharpBook: DEFAULT_SHARP_BOOK, retailBook: DEFAULT_RETAIL_BOOK } = getRuntimeConfig().tennis;
+const _cfg = getRuntimeConfig();
+const DEFAULT_SHARP_BOOK = _cfg.sharpBook ?? "Bet365";
+const DEFAULT_RETAIL_BOOK = _cfg.retailBook ?? "Winamax FR";
 
 function titleCase(value) {
   return String(value || "")
@@ -26,7 +28,7 @@ export function formatEventSchedule(isoValue, meta = {}) {
   const venue = meta.venue || meta.stadium || "";
 
   if (!isoValue) {
-    const fallback = [tournament, round, venue].filter(Boolean).join(" · ");
+    const fallback = [tournament, round, venue].filter(Boolean).join(" Â· ");
     return {
       tournament,
       round,
@@ -55,7 +57,7 @@ export function formatEventSchedule(isoValue, meta = {}) {
     month: "long",
   });
   const timeLabel = date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
-  const display = [tournament, round, dateLabel, timeLabel, venue].filter(Boolean).join(" · ");
+  const display = [tournament, round, dateLabel, timeLabel, venue].filter(Boolean).join(" Â· ");
 
   return {
     tournament,
@@ -358,3 +360,4 @@ export function buildOddsComparison(bookmakers = {}, spec) {
     comparisonNote,
   };
 }
+

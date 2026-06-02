@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Aplica migraciones SQL pendientes al arrancar (idempotente).
  */
 
@@ -10,7 +10,11 @@ import { getSharedDbPool, hasDatabaseConfig } from "./picks-db.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..", "..");
 
-const MIGRATION_FILES = ["003_backtesting_clv.sql", "004_picks_history.sql"];
+const MIGRATION_FILES = [
+  "003_backtesting_clv.sql",
+  "004_picks_history.sql",
+  "005_analysis_cache.sql",
+];
 
 export async function runPendingMigrations() {
   if (!hasDatabaseConfig()) {
@@ -35,8 +39,9 @@ export async function runPendingMigrations() {
     await pool.query(sql);
     await pool.query(`INSERT INTO schema_migrations (name) VALUES ($1)`, [file]);
     ran += 1;
-    console.log(`[db] Migración aplicada: ${file}`);
+    console.log(`[db] MigraciÃ³n aplicada: ${file}`);
   }
 
   return { ran, storage: "postgresql" };
 }
+

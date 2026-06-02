@@ -1,4 +1,4 @@
-services:
+﻿services:
   postgres:
     image: postgres:16-alpine
     container_name: dany-picks-postgres
@@ -20,6 +20,7 @@ services:
       - ./002_pick_telegram_sent.sql:/docker-entrypoint-initdb.d/002_telegram_sent.sql:ro
       - ./003_backtesting_clv.sql:/docker-entrypoint-initdb.d/003_backtesting_clv.sql:ro
       - ./004_picks_history.sql:/docker-entrypoint-initdb.d/004_picks_history.sql:ro
+      - ./005_analysis_cache.sql:/docker-entrypoint-initdb.d/005_analysis_cache.sql:ro
 
   tennis-oracle:
     build:
@@ -65,7 +66,7 @@ services:
       SPORTRADAR_API_KEY: ${SPORTRADAR_API_KEY:-}
       SPORTRADAR_ACCESS_LEVEL: ${SPORTRADAR_ACCESS_LEVEL:-trial}
       SPORTRADAR_LANGUAGE: ${SPORTRADAR_LANGUAGE:-en}
-      TENNIS_TIMEZONE: ${TENNIS_TIMEZONE:-Europe/Madrid}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Madrid}
       TENNIS_MAX_MATCHES: ${TENNIS_MAX_MATCHES:-12}
       TENNIS_RECENT_WINDOW_DAYS: ${TENNIS_RECENT_WINDOW_DAYS:-120}
       FLASHSCORE_SNAPSHOT_FILE: ${FLASHSCORE_SNAPSHOT_FILE:-/app/src/data/community/flashscore-live.snapshot.example.json}
@@ -87,3 +88,4 @@ services:
 
 volumes:
   postgres_data:
+

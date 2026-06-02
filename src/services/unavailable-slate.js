@@ -1,4 +1,4 @@
-import { canonicalName } from "../providers/shared/tennis-normalizers.js";
+﻿import { canonicalName } from "../providers/shared/tennis-normalizers.js";
 
 export function applySurfaceOverrides(slate, overrides) {
   if (!overrides || typeof overrides !== "object" || !slate?.matches) return slate;
@@ -32,11 +32,12 @@ export function createUnavailableSlate(date, config, reason, providerManifest) {
     stalenessMinutes: 999,
     providerManifest: providerManifest || { generatedAt: new Date().toISOString(), providers: [] },
     runtime: {
-      dataProvider: config.dataProvider,
+      dataProvider: config.oddsProvider || "none",
       oddsProvider: config.oddsProvider,
-      maxMatches: config.maxMatches,
-      recentWindowDays: config.recentWindowDays,
+      maxMatches: config.maxMatches || null,
+      recentWindowDays: config.recentWindowDays || null,
       unavailableReason: reason,
     },
   };
 }
+

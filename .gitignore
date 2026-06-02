@@ -1,4 +1,4 @@
-# Ignore everything at repo root by default, then allow project files.
+﻿# Ignore everything at repo root by default, then allow project files.
 /*
 
 !.gitignore
@@ -16,6 +16,7 @@
 !002_pick_telegram_sent.sql
 !003_backtesting_clv.sql
 !004_picks_history.sql
+!005_analysis_cache.sql
 
 !public/
 !public/**
@@ -71,3 +72,5 @@ scripts/cloudflared/
 Thumbs.db
 .vscode/
 .idea/
+
+

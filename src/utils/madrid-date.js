@@ -1,7 +1,7 @@
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+﻿const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function getAppTimezone() {
-  return process.env.TENNIS_TIMEZONE || "Europe/Madrid";
+  return process.env.APP_TIMEZONE || process.env.TENNIS_TIMEZONE || "Europe/Madrid";
 }
 
 export function getDateStringInTimezone(date = new Date(), timeZone = getAppTimezone()) {
@@ -86,3 +86,4 @@ export function isMatchInAnalysisWindow(isoValue, targetDate, timeZone = getAppT
     timeZone,
   });
 }
+

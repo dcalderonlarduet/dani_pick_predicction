@@ -1,6 +1,7 @@
-import { calibrateForDisplay, calibrateForScoring } from "./pick-calibration.js";
+﻿import { calibrateForDisplay, calibrateForScoring } from "./pick-calibration.js";
 import { attachLineTrapFlags } from "./line-trap-flags.js";
 import { detectLineMovement } from "./line-movement-engine.js";
+import { buildCoherenceCtx, resolvePickCoherence } from "./pick-coherence.js";
 import {
   estimateFirstHalfLineFromGame,
   lineMovementSideForPick,
@@ -497,9 +498,22 @@ export async function evaluateNbaGamePicks(game) {
     }
   }
 
-  const sorted = picks.sort((a, b) => (b.score || 0) - (a.score || 0));
+  const homeProj = projectNbaTeamTotal(ctx, "home");
+  const awayProj = projectNbaTeamTotal(ctx, "away");
+  const coherenceCtx = buildCoherenceCtx(ctx, homeProj?.pts, awayProj?.pts);
+
+  const { coherent, removed } = resolvePickCoherence(picks, coherenceCtx);
+  if (removed.length > 0) {
+    console.info(
+      `[NBA-coherence] ${removed.length} pick(s) descartado(s) por contradicciÇün en partido ${ctx?.homeName ?? "?"} vs ${ctx?.awayName ?? "?"}: ` +
+      removed.map((p) => `${p.market}(${p.side})`).join(", ")
+    );
+  }
+
+  const sorted = coherent.sort((a, b) => (b.score || 0) - (a.score || 0));
   persistPolicyPicks(game, sorted, "nba", "NBA").catch((err) => {
     console.warn("[backtesting] NBA persist:", err.message);
   });
   return sorted;
 }
+

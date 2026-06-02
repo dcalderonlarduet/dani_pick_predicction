@@ -1,5 +1,6 @@
-import { attachLineTrapFlags } from "./line-trap-flags.js";
+﻿import { attachLineTrapFlags } from "./line-trap-flags.js";
 import { calibrateForDisplay, calibrateForScoring } from "./pick-calibration.js";
+import { buildCoherenceCtx, resolvePickCoherence } from "./pick-coherence.js";
 import { lineMovementSideForPick, pickProMarketQuote } from "./pro-market-quotes.js";
 import {
   calcularScore,
@@ -31,7 +32,7 @@ const MARKET_ORDER = ["game_total", "moneyline", "team_total_home", "team_total_
 
 const ODDS_RANGE = WNBA_THRESHOLDS.oddsRange;
 
-// [WNBA-OVERRIDE] Line movement desactivado — mercado demasiado pequeño
+// [WNBA-OVERRIDE] Line movement desactivado â€” mercado demasiado pequeÃ±o
 function neutralLineMovement() {
   return {
     tipo: "NEUTRO",
@@ -536,7 +537,20 @@ export async function evaluateWnbaGamePicks(game) {
     }
   }
 
-  const sorted = deduplicateTeamTotalPicks(picks).sort((a, b) => (b.score || 0) - (a.score || 0));
+  const homeProj = projectWnbaTeamTotal(ctx, "home");
+  const awayProj = projectWnbaTeamTotal(ctx, "away");
+  const coherenceCtx = buildCoherenceCtx(ctx, homeProj.pts, awayProj.pts);
+
+  const deduped = deduplicateTeamTotalPicks(picks);
+  const { coherent, removed } = resolvePickCoherence(deduped, coherenceCtx);
+  if (removed.length > 0) {
+    console.info(
+      `[WNBA-coherence] ${removed.length} pick(s) descartado(s) por contradicciÇün en partido ${ctx?.homeName ?? "?"} vs ${ctx?.awayName ?? "?"}: ` +
+      removed.map((p) => `${p.market}(${p.side})`).join(", ")
+    );
+  }
+
+  const sorted = coherent.sort((a, b) => (b.score || 0) - (a.score || 0));
   persistPolicyPicks(game, sorted, "wnba", "WNBA").catch((err) => {
     console.warn("[backtesting] WNBA persist:", err.message);
   });
@@ -544,3 +558,4 @@ export async function evaluateWnbaGamePicks(game) {
 }
 
 export { SPORT };
+

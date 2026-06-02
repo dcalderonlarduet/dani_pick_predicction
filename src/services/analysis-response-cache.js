@@ -1,11 +1,12 @@
-import { getOddsApiRateLimitState } from "../providers/odds-api-io.js";
+﻿import { getOddsApiRateLimitState } from "../providers/odds-api-io.js";
+import { getSharedDbPool, hasDatabaseConfig } from "./picks-db.js";
 
 const analysisCache = new Map();
 export const ANALYSIS_CACHE_TTL_MS = 10 * 60 * 1000;
 export const ANALYSIS_CACHE_STALE_MS = 6 * 60 * 60 * 1000;
 
 export const RATE_LIMIT_UNAVAILABLE_REASON =
-  "Odds-API.io limitó las consultas. Mostrando el último snapshot disponible.";
+  "Odds-API.io limitÇü las consultas. Mostrando el Ç§ltimo snapshot disponible.";
 
 function getMadridMinuteOfDay() {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -51,10 +52,84 @@ function enrichAnalysisWithRateLimit(payload) {
     rateLimit,
     staleBecauseRateLimit: true,
     dataStaleUntil: rateLimit.staleUntil || rateLimit.retryAt || null,
-    unavailableReason:
-      spreadablePayload.unavailableReason ||
-      RATE_LIMIT_UNAVAILABLE_REASON,
+    unavailableReason: spreadablePayload.unavailableReason || RATE_LIMIT_UNAVAILABLE_REASON,
   };
+}
+
+async function persistSnapshotToDb(cacheKey, entry) {
+  if (!hasDatabaseConfig()) return;
+  try {
+    const pool = getSharedDbPool();
+    await pool.query(
+      `INSERT INTO analysis_cache_snapshots
+         (cache_key, payload, created_at, expires_at, stale_until, stored_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (cache_key) DO UPDATE SET
+         payload = EXCLUDED.payload,
+         created_at = EXCLUDED.created_at,
+         expires_at = EXCLUDED.expires_at,
+         stale_until = EXCLUDED.stale_until,
+         stored_at = EXCLUDED.stored_at`,
+      [
+        cacheKey,
+        JSON.stringify(entry.payload),
+        new Date(entry.createdAt),
+        new Date(entry.expiresAt),
+        new Date(entry.staleUntil),
+        new Date(entry.storedAt),
+      ]
+    );
+  } catch (err) {
+    console.warn(`[analysis-cache] No se pudo persistir snapshot '${cacheKey}' en BD:`, err.message);
+  }
+}
+
+export async function loadSnapshotsFromDb() {
+  if (!hasDatabaseConfig()) return 0;
+  try {
+    const pool = getSharedDbPool();
+    const now = new Date();
+    const { rows } = await pool.query(
+      `SELECT cache_key, payload, created_at, expires_at, stale_until, stored_at
+       FROM analysis_cache_snapshots
+       WHERE stale_until > $1
+       ORDER BY stored_at DESC`,
+      [now]
+    );
+    let loaded = 0;
+    for (const row of rows) {
+      if (analysisCache.has(row.cache_key)) continue;
+      analysisCache.set(row.cache_key, {
+        payload: typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload,
+        createdAt: new Date(row.created_at).getTime(),
+        expiresAt: new Date(row.expires_at).getTime(),
+        staleUntil: new Date(row.stale_until).getTime(),
+        storedAt: new Date(row.stored_at).getTime(),
+      });
+      loaded += 1;
+    }
+    if (loaded > 0) {
+      console.log(`[analysis-cache] ${loaded} snapshots restaurados desde BD al arrancar.`);
+    }
+    return loaded;
+  } catch (err) {
+    console.warn("[analysis-cache] No se pudo cargar snapshots desde BD:", err.message);
+    return 0;
+  }
+}
+
+export async function pruneExpiredDbSnapshots() {
+  if (!hasDatabaseConfig()) return 0;
+  try {
+    const pool = getSharedDbPool();
+    const { rowCount } = await pool.query(
+      `DELETE FROM analysis_cache_snapshots WHERE stale_until < NOW()`
+    );
+    return rowCount || 0;
+  } catch (err) {
+    console.warn("[analysis-cache] Error al limpiar snapshots expirados:", err.message);
+    return 0;
+  }
 }
 
 function getReusableAnalysisEntry(cacheKey) {
@@ -86,7 +161,7 @@ function storeAnalysisPayload(cacheKey, payload, {
   const now = Date.now();
   const basePayload = sanitizeAnalysisPayload(payload);
 
-  analysisCache.set(cacheKey, {
+  const entry = {
     payload: basePayload,
     createdAt: fresh ? now : previousEntry?.createdAt || now,
     expiresAt: fresh ? now + ttlMs : previousEntry?.expiresAt || 0,
@@ -94,7 +169,9 @@ function storeAnalysisPayload(cacheKey, payload, {
       ? now + ttlMs + staleMs
       : Math.max(previousEntry?.staleUntil || 0, now + staleMs),
     storedAt: now,
-  });
+  };
+  analysisCache.set(cacheKey, entry);
+  persistSnapshotToDb(cacheKey, entry).catch(() => {});
   return basePayload;
 }
 
@@ -169,7 +246,6 @@ export function peekCachedAnalysis(cacheKey) {
   };
 }
 
-/** Devuelve análisis en memoria sin disparar builder (fresh o stale usable). */
 export function getCachedAnalysisIfAvailable(cacheKey, { enrichRateLimit = true, isUsable = null } = {}) {
   const entry = getReusableAnalysisEntry(cacheKey);
   const now = Date.now();
