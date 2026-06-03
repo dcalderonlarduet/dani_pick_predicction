@@ -6,7 +6,49 @@ export const ANALYSIS_CACHE_TTL_MS = 10 * 60 * 1000;
 export const ANALYSIS_CACHE_STALE_MS = 6 * 60 * 60 * 1000;
 
 export const RATE_LIMIT_UNAVAILABLE_REASON =
-  "Odds-API.io limitÇü las consultas. Mostrando el Ç§ltimo snapshot disponible.";
+  "Odds-API.io limitó las consultas. Mostrando el último snapshot disponible.";
+
+const SPORT_UI_META = {
+  mlb: { sportId: "mlb", deporte: "MLB", icono: "\u26BE", iconKey: "mlb" },
+  futbol: { sportId: "futbol", deporte: "FÚTBOL", icono: "\u26BD", iconKey: "futbol" },
+  nba: { sportId: "nba", deporte: "NBA", icono: "\u{1F3C0}", iconKey: "nba" },
+  wnba: { sportId: "wnba", deporte: "WNBA", icono: "wnba", iconKey: "wnba" },
+  nfl: { sportId: "nfl", deporte: "NFL", icono: "\u{1F3C8}", iconKey: "nfl" },
+  quiniela: { sportId: "quiniela", deporte: "QUINIELA", icono: "\u{1F9FE}", iconKey: "quiniela" },
+};
+
+function enrichPickSportMeta(pick, sportId) {
+  if (!pick || typeof pick !== "object") return pick;
+  const meta = SPORT_UI_META[sportId];
+  if (!meta) return pick;
+  return {
+    ...pick,
+    sportId: pick.sportId || meta.sportId,
+    sport: pick.sport || meta.sportId,
+    deporte: pick.deporte || meta.deporte,
+    icono: pick.icono || meta.icono,
+    iconKey: pick.iconKey || meta.iconKey,
+  };
+}
+
+export function enrichAnalysisSportMeta(payload, sportId) {
+  if (!payload || typeof payload !== "object" || !sportId) return payload;
+  const key = String(sportId).toLowerCase();
+  const meta = SPORT_UI_META[key];
+  const next = {
+    ...payload,
+    sportId: payload.sportId || meta?.sportId || key,
+    sport: payload.sport || key,
+    moduleSport: payload.moduleSport || key,
+  };
+  if (Array.isArray(next.picks)) {
+    next.picks = next.picks.map((pick) => enrichPickSportMeta(pick, key));
+  }
+  if (Array.isArray(next.modelPicks)) {
+    next.modelPicks = next.modelPicks.map((pick) => enrichPickSportMeta(pick, key));
+  }
+  return next;
+}
 
 function getMadridMinuteOfDay() {
   const parts = new Intl.DateTimeFormat("en-US", {

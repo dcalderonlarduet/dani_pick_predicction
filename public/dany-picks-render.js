@@ -421,10 +421,19 @@
     `;
   }
 
+  function resolvePickSportIdLocal(pick) {
+    if (typeof resolvePickSportId === "function") return resolvePickSportId(pick);
+    return pick?.sportId || pick?._sport || pick?.raw?.sport || "";
+  }
+
   function renderDpSportIcon(pick, variant = "card") {
+    if (typeof renderPickSportIcon === "function") {
+      return renderPickSportIcon(pick, variant);
+    }
     const cls = variant === "title" ? "dp-title-sport-icon" : "dp-card-sport-icon";
+    const sportId = resolvePickSportIdLocal(pick);
     if (typeof sportIconHtml === "function") {
-      return `<span class="${cls}">${sportIconHtml(pick.sportId)}</span>`;
+      return `<span class="${cls}">${sportIconHtml(sportId)}</span>`;
     }
     return `<span class="${cls}">${text(pick.icono || "")}</span>`;
   }
@@ -435,16 +444,20 @@
   }
 
   function resolvePickLeagueTitle(pick) {
+    const sportId = resolvePickSportIdLocal(pick);
     const match = pick.eventContext || {};
-    if (pick.sportId === "tennis") {
+    if (sportId === "tennis") {
       return String(match.category || match.tournament || pick.deporte || "TENNIS").toUpperCase();
     }
-    if (pick.sportId === "mlb") {
+    if (sportId === "mlb") {
       return String(match.league?.name || pick.deporte || "MLB").toUpperCase();
     }
-    if (pick.sportId === "futbol") {
+    if (sportId === "futbol") {
       return String(match.league?.name || match.liga || pick.deporte || "FUTBOL").toUpperCase();
     }
+    if (sportId === "nba") return String(match.league?.name || pick.deporte || "NBA").toUpperCase();
+    if (sportId === "wnba") return String(match.league?.name || pick.deporte || "WNBA").toUpperCase();
+    if (sportId === "nfl") return String(match.league?.name || pick.deporte || "NFL").toUpperCase();
     return String(pick.deporte || "PICK").toUpperCase();
   }
 
@@ -1003,13 +1016,15 @@
     const renderLegacyPickCard = renderLegacyPickCardFactory(legacyRenderPickCard);
 
     renderPickCard = window.renderPickCard = function renderPickCardDany(pick, index) {
-      if (pick?.sportId === "tennis") return renderDanyTennisPickCard(pick, index);
-      if (pick?.sportId === "futbol") return renderDanyFutbolPickCard(pick, index);
-      if (pick?.sportId === "mlb") return renderDanyMlbPickCard(pick, index);
-      if (pick?.sportId === "nba") return renderDanyProPickCard(pick, index, "is-nba-pick");
-      if (pick?.sportId === "wnba") return renderDanyProPickCard(pick, index, "is-wnba-pick");
-      if (pick?.sportId === "nfl") return renderDanyProPickCard(pick, index, "is-nfl-pick");
-      return renderLegacyPickCard(pick, index);
+      const sportId = resolvePickSportIdLocal(pick);
+      const cardPick = sportId && !pick?.sportId ? { ...pick, sportId } : pick;
+      if (sportId === "tennis") return renderDanyTennisPickCard(cardPick, index);
+      if (sportId === "futbol") return renderDanyFutbolPickCard(cardPick, index);
+      if (sportId === "mlb") return renderDanyMlbPickCard(cardPick, index);
+      if (sportId === "nba") return renderDanyProPickCard(cardPick, index, "is-nba-pick");
+      if (sportId === "wnba") return renderDanyProPickCard(cardPick, index, "is-wnba-pick");
+      if (sportId === "nfl") return renderDanyProPickCard(cardPick, index, "is-nfl-pick");
+      return renderLegacyPickCard(cardPick, index);
     };
 
     renderAnalysisLine = window.renderAnalysisLine = function renderAnalysisLineDany(item, featured, moduleId) {

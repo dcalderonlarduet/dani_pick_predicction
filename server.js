@@ -40,6 +40,7 @@ import {
 } from "./src/utils/madrid-date.js";
 import { buildPickIdentityKey } from "./src/utils/pick-identity.js";
 import {
+  enrichAnalysisSportMeta,
   getCachedAnalysis,
   getCachedAnalysisIfAvailable,
   getAnalysisCacheTtlMs,
@@ -189,7 +190,7 @@ async function loadAnalysisWithTelegram(cacheKey, builder, sport, { refresh = fa
       console.warn("[backtest] Snapshot error:", error.message);
     });
   }
-  return analysis;
+  return enrichAnalysisSportMeta(analysis, sport);
 }
 
 function wantsAnalysisRefresh(searchParams) {
@@ -311,7 +312,7 @@ const server = http.createServer(async (req, res) => {
       const date = resolveAnalysisDate(url.searchParams.get("date"));
       const refresh = wantsAnalysisRefresh(url.searchParams);
       const analysis = await loadQuinielaAnalysisCached(date, () => buildQuinielaAnalysis(date), { refresh });
-      sendJson(res, 200, analysis);
+      sendJson(res, 200, enrichAnalysisSportMeta(analysis, "quiniela"));
       return;
     }
 

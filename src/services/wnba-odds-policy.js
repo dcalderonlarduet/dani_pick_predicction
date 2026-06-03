@@ -545,7 +545,7 @@ export async function evaluateWnbaGamePicks(game) {
   const { coherent, removed } = resolvePickCoherence(deduped, coherenceCtx);
   if (removed.length > 0) {
     console.info(
-      `[WNBA-coherence] ${removed.length} pick(s) descartado(s) por contradicciÇün en partido ${ctx?.homeName ?? "?"} vs ${ctx?.awayName ?? "?"}: ` +
+      `[WNBA-coherence] ${removed.length} pick(s) descartado(s) por contradicción en partido ${ctx?.homeName ?? "?"} vs ${ctx?.awayName ?? "?"}: ` +
       removed.map((p) => `${p.market}(${p.side})`).join(", ")
     );
   }

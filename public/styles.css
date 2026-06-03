@@ -455,11 +455,12 @@ nav {
 .best-pick-banner {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px 28px;
-  padding: 24px 28px;
-  min-height: 148px;
+  grid-template-columns: 72px minmax(0, 1fr) minmax(188px, 260px);
+  grid-template-areas: "crown body right";
+  align-items: stretch;
+  gap: 16px 24px;
+  padding: 22px 24px;
+  min-height: 0;
   border-radius: var(--r-lg);
   border: 1.5px solid rgba(16, 232, 122, 0.45);
   background:
@@ -536,6 +537,7 @@ nav {
 }
 
 .best-pick-crown {
+  grid-area: crown;
   position: relative;
   z-index: 1;
   width: 68px;
@@ -618,19 +620,36 @@ nav {
 .best-pick-banner--honor .best-pick-label { color: #8ec8ff; }
 
 .best-pick-body {
+  grid-area: body;
   position: relative;
   z-index: 1;
   min-width: 0;
-  max-width: 760px;
+  max-width: none;
+  width: 100%;
 }
 
 .best-pick-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--good);
   letter-spacing: 0.12em;
   font-weight: 700;
   margin-bottom: 6px;
 }
+
+.best-pick-sport-name {
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.best-pick-label-sep { color: var(--text3); }
+.best-pick-label-kind { color: var(--good); font-weight: 800; letter-spacing: 0.06em; }
+.best-pick-label-time { color: var(--text2); }
 
 .best-pick-track-row {
   display: flex;
@@ -655,15 +674,44 @@ nav {
 }
 
 .best-pick-right {
+  grid-area: right;
   position: relative;
   z-index: 1;
   display: flex;
-  gap: 14px 16px;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  margin-left: auto;
-  min-width: min(340px, 100%);
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 10px;
+  margin-left: 0;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.best-pick-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+
+.best-pick-label-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.best-pick-label-icon .sport-svg-icon,
+.best-pick-label-icon .sport-emoji-icon {
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .best-pick-ev {
@@ -703,10 +751,33 @@ nav {
   color: #ff9944;
 }
 
-.best-pick-odds { text-align: right; }
+.best-pick-odds {
+  text-align: right;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.best-pick-cuota-block {
+  text-align: right;
+  line-height: 1.1;
+}
+
+.best-pick-banner .best-pick-books,
+.best-pick-banner .best-pick-books-inner {
+  margin-left: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.best-pick-banner .t-odds-row.is-compact {
+  justify-content: flex-end;
+}
 
 .best-pick-cuota {
-  font-size: 30px;
+  font-size: clamp(28px, 3vw, 36px);
   font-weight: 900;
   color: var(--yellow);
   font-family: monospace;
@@ -715,7 +786,10 @@ nav {
 
 .best-pick-casa {
   font-size: 9px;
-  margin-top: 3px;
+  margin-top: 4px;
+  color: var(--text3);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .picks-grid {
@@ -4387,12 +4461,77 @@ body.modal-open {
   }
 }
 .top-picks-by-sport { width: 100%; }
-.top-picks-sport-block { margin-bottom: 24px; }
+.top-picks-by-sport {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.top-picks-host {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.top-picks-sport-block { margin-bottom: 0; }
 .top-picks-sport-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.07); }
 .top-picks-sport-title { margin: 0; font-size: 14px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; line-height: 1.1; }
-.top-picks-sport-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); font-size: 18px; flex-shrink: 0; }
-.top-picks-sport-icon .sport-svg-icon { width: 18px; height: 18px; }
-.top-picks-sport-count { background: rgba(255,255,255,0.07); padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+.top-picks-sport-icon,
+.dp-title-sport-icon,
+.dp-card-sport-icon,
+.best-pick-label-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.top-picks-sport-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 18px;
+}
+.top-picks-sport-icon .sport-svg-icon,
+.top-picks-sport-icon .sport-emoji-icon { width: 18px; height: 18px; font-size: 18px; }
+.sport-emoji-icon { display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.sport-text-icon { font-size: 0.82em; font-weight: 900; letter-spacing: 0.04em; color: var(--text2); }
+.top-picks-sport-count { margin-left: auto; background: rgba(255,255,255,0.07); padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+.top-picks-sport-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+  align-items: start;
+  width: 100%;
+}
+.top-picks-sport-grid .t-pick {
+  min-width: 0;
+  width: 100%;
+}
+.top-picks-sport-grid .t-pick-header {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.top-picks-sport-grid .t-pick-title-block {
+  flex: 0 1 auto;
+  width: 100%;
+}
+.top-picks-sport-grid .t-pick-header-meta {
+  width: 100%;
+  margin-left: 0;
+  justify-content: flex-start;
+}
+.top-picks-sport-grid .t-pick-sport-title {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.top-picks-sport-grid .t-pick-match,
+.top-picks-sport-grid .t-pick-selection {
+  overflow-wrap: anywhere;
+}
 .top-picks-sport-grid .t-pick.is-home-top-pick,
 .top-picks-sport-grid .f-market.is-home-top-pick { box-shadow: 0 0 0 1px rgba(16, 232, 122, 0.18); }
 .dp-card-sport-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: auto; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); font-size: 16px; flex-shrink: 0; }
@@ -5134,7 +5273,12 @@ body.modal-open {
   .sport-desk-game-team--home { text-align: left; align-items: flex-start; }
   .sport-desk-game-vs { display: none; }
 }
-#picks-grid-main:has(.top-picks-sport-block) { display: block; }
+#picks-grid-main.top-picks-host,
+#picks-grid-main:has(.top-picks-sport-block) {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
 .alta-confianza-badge { display: inline-flex; align-items: center; gap: 4px; background: linear-gradient(135deg, #f6c90e 0%, #ff8c00 100%); color: #0a1a10; font-size: 9px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; margin-top: 6px; box-shadow: 0 0 8px rgba(246,201,14,0.35); }
 .t-alta-confianza { display: inline-flex; align-items: center; gap: 4px; background: linear-gradient(135deg, #f6c90e 0%, #ff8c00 100%); color: #0a1a10; font-size: 9px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; margin-bottom: 4px; box-shadow: 0 0 6px rgba(246,201,14,0.3); }
 .is-top-pick { box-shadow: 0 0 0 1px rgba(246,201,14,0.25), 0 4px 18px rgba(246,201,14,0.08) !important; }
@@ -5503,7 +5647,8 @@ body.modal-open {
     justify-content: space-between;
   }
 
-  .picks-grid {
+  .picks-grid,
+  .top-picks-sport-grid {
     grid-template-columns: 1fr;
     gap: 10px;
   }
@@ -5515,16 +5660,21 @@ body.modal-open {
   #best-pick-section { width: 100%; }
 
   .best-pick-banner {
-    grid-template-columns: 1fr;
-    align-items: flex-start;
+    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-areas:
+      "crown body"
+      "right right";
+    align-items: start;
     min-height: 0;
     padding: 16px;
+    gap: 12px 14px;
   }
 
   .best-pick-right {
     width: 100%;
     min-width: 0;
-    justify-content: flex-start;
+    justify-content: space-between;
+    align-self: stretch;
   }
 
   .best-pick-books {
@@ -6267,7 +6417,7 @@ nav,
 }
 
 .hero {
-  align-items: stretch;
+  align-items: flex-end;
 }
 
 .hero > div:first-child {
@@ -6294,14 +6444,18 @@ nav,
 
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(104px, 1fr));
-  align-content: stretch;
-  flex: 1 1 340px;
-  max-width: 430px;
+  grid-template-columns: repeat(3, minmax(96px, 1fr));
+  align-content: start;
+  align-items: start;
+  align-self: flex-end;
+  flex: 0 1 360px;
+  max-width: 400px;
 }
 
 .stat-box {
   min-width: 0;
+  align-self: start;
+  height: auto;
 }
 
 .module-dock-grid {
@@ -6337,8 +6491,33 @@ nav,
   min-width: 104px;
 }
 
-.best-pick-banner {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+@media (max-width: 900px) {
+  .best-pick-banner {
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas:
+      "crown body"
+      "right right";
+    gap: 12px 16px;
+  }
+
+  .best-pick-right {
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-left: 0;
+    padding-top: 12px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .best-pick-stats {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    width: auto;
+  }
 }
 
 @media (max-width: 820px) {
@@ -6390,9 +6569,29 @@ nav,
     grid-template-columns: 1fr;
   }
 
-  .sport-desk-pick-card-body,
-  .best-pick-banner {
+  .sport-desk-pick-card-body {
     grid-template-columns: 1fr;
+  }
+
+  .best-pick-banner {
+    grid-template-columns: 52px minmax(0, 1fr);
+    grid-template-areas:
+      "crown body"
+      "right right";
+    padding: 14px;
+  }
+
+  .best-pick-right {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    align-self: stretch;
+  }
+
+  .best-pick-stats {
+    align-items: flex-start;
+    width: 100%;
   }
 
   .sport-desk-pick-card-side {

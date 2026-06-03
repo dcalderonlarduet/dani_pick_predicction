@@ -66,13 +66,13 @@ const herramientas = [
   },
   {
     categoria: 'Servidor aplicaciones',
-    herramienta: 'Apache Tomcat',
-    version: '9.0.100',
-    uso: 'Desplegar WAR en VDI sin WebLogic: ddceu-gala-java-gala-web (Spring MVC WAR), batch/parking/serviciosweb (WAR provided scope)',
+    herramienta: 'Oracle WebLogic Server',
+    version: '14.0.2',
+    uso: 'Desplegar WAR en VDI con el mismo runtime que producción: ddceu-gala-java-gala-web (Spring MVC WAR), batch/parking, ddceu-gala-java-gala-serviciosweb y ddceu-gala-java-gala-caven-ws (Java 21, WAR provided scope)',
     justificacion:
-      'En producción el target es WebLogic 14; en desarrollo uso Tomcat 9.0.100 para levantar gala-web y WARs sin desplegar en servidor corporativo. caven-ws excluye tomcat-embed para despliegue externo: mismo Tomcat 9.0.100 unifica pruebas. Reinicio y debug en minutos, no por ticket de despliegue.',
+      'WebLogic 14.0.2 es el servidor de aplicaciones requerido para alinear desarrollo local con producción y levantar los servicios migrados a Java 21 (serviciosweb SOAP, caven-ws). Permite validar JNDI, datasources Oracle y despliegue WAR sin divergencias respecto a Tomcat embebido. Reinicio y debug en dominio local sin depender de despliegue corporativo compartido.',
     prioridad: 'Alta',
-    notas: 'Alinear versión con target WebLogic 14; documentar datasource JNDI o equivalente Spring.',
+    notas: 'Instalar WebLogic 14.0.2 con JDK 21 para servicios migrados; documentar datasource JNDI y dominios (dev/pre). Incluir permisos de reinicio en VDI.',
   },
   {
     categoria: 'Build',
@@ -228,7 +228,7 @@ const herramientas = [
 const contras = [
   {
     aspecto: 'Ciclo compilar → probar → depurar',
-    hoy: 'Minutos en PC local: F5, breakpoint, reinicio Tomcat',
+    hoy: 'Minutos en PC local: F5, breakpoint, reinicio dominio WebLogic 14.0.2',
     entornoNuevo: 'Latencia VDI, recursos compartidos, posible prohibición debug → horas o dependencia de IT',
     impacto: 'Alto',
   },
@@ -246,8 +246,8 @@ const contras = [
   },
   {
     aspecto: 'gala-web MVC',
-    hoy: 'Tomcat local simulando WebLogic; debug pantalla→DAO→Oracle en un flujo',
-    entornoNuevo: 'Deploy en servidor compartido o sin Tomcat → sin prueba rápida de pantallas',
+    hoy: 'WebLogic 14.0.2 local; debug pantalla→DAO→Oracle en un flujo alineado con producción',
+    entornoNuevo: 'Deploy en servidor compartido o sin WebLogic local → sin prueba rápida de pantallas',
     impacto: 'Alto',
   },
   {
@@ -319,7 +319,7 @@ const contras = [
   {
     aspecto: 'Autonomía: variables de entorno y perfiles (dev / pre / pro)',
     hoy: 'Defino JAVA_OPTS, URLs de datasource, claves de perfil Spring (`spring.profiles.active`), variables en IntelliJ Run Configuration o .env local para batch y microservicios',
-    entornoNuevo: 'Variables solo las inyecta IT en VDI/servidor; cambio de URL Oracle, puerto Tomcat o flag de feature → ticket y espera; error de variable mal cargada no se detecta hasta despliegue',
+    entornoNuevo: 'Variables solo las inyecta IT en VDI/servidor; cambio de URL Oracle, puerto/listener WebLogic o flag de feature → ticket y espera; error de variable mal cargada no se detecta hasta despliegue',
     impacto: 'Medio-Alto',
   },
   {
@@ -335,8 +335,8 @@ const contras = [
     impacto: 'Medio',
   },
   {
-    aspecto: 'Autonomía: reinicio Tomcat 9.0.100 y ficheros batch de prueba',
-    hoy: 'Reinicio Tomcat tras cambio WAR; ejecuto listablanca-batch con CSV de entrada en carpeta local',
+    aspecto: 'Autonomía: reinicio WebLogic 14.0.2 y ficheros batch de prueba',
+    hoy: 'Reinicio dominio WebLogic tras cambio WAR; ejecuto listablanca-batch con CSV de entrada en carpeta local',
     entornoNuevo: 'Reinicio de servicio o escritura en directorio de entrada del batch requiere permiso operador o ticket',
     impacto: 'Alto (gala-web, listablanca-batch)',
   },
@@ -386,7 +386,7 @@ const rowsContras = [
   [],
   [
     'Resumen solicitud',
-    `Replicar en VDI/sandbox (CyberArk) el ciclo sobre D:\\AENA\\proyect\\ddceu-gala-*: IntelliJ+VS Code+Angular CLI (ng)+Node.js, JDK 11.0.31/21.0.11, Tomcat 9.0.100, Oracle, Git, SoapUI, Postman. Autonomía mínima: Maven/npm, PRE/PRO CyberArk, variables entorno, JDK dual, reinicio Tomcat/batch. Ver hoja contras AUTONOMÍA.`,
+    `Replicar en VDI/sandbox (CyberArk) el ciclo sobre D:\\AENA\\proyect\\ddceu-gala-*: IntelliJ+VS Code+Angular CLI (ng)+Node.js, JDK 11.0.31/21.0.11, WebLogic 14.0.2, Oracle, Git, SoapUI, Postman. Autonomía mínima: Maven/npm, PRE/PRO CyberArk, variables entorno, JDK dual, reinicio WebLogic/batch. Ver hoja contras AUTONOMÍA.`,
   ],
 ];
 

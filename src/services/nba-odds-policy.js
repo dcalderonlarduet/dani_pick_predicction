@@ -505,7 +505,7 @@ export async function evaluateNbaGamePicks(game) {
   const { coherent, removed } = resolvePickCoherence(picks, coherenceCtx);
   if (removed.length > 0) {
     console.info(
-      `[NBA-coherence] ${removed.length} pick(s) descartado(s) por contradicciÇün en partido ${ctx?.homeName ?? "?"} vs ${ctx?.awayName ?? "?"}: ` +
+      `[NBA-coherence] ${removed.length} pick(s) descartado(s) por contradicción en partido ${ctx?.homeName ?? "?"} vs ${ctx?.awayName ?? "?"}: ` +
       removed.map((p) => `${p.market}(${p.side})`).join(", ")
     );
   }

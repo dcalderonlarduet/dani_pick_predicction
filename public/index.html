@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
 <title>DANY PICKS | Vamos hacer una platica</title>
 <link rel="icon" type="image/svg+xml" href="/favicon-d.svg" />
-<link rel="stylesheet" href="/styles.css?v=mobile-fix-2" />
+<link rel="stylesheet" href="/styles.css?v=home-sport-icons-4" />
 <script src="/line-trap-ui.js"></script>
 </head>
 <body>
@@ -768,15 +768,48 @@ function commitModuleData(moduleId, data, { fetchedAt = Date.now(), fromClientCa
 const TRACKER_REFRESH_MS = 15 * 60 * 1000;
 const TRACKER_SETTLE_REFRESH_MS = 5 * 60 * 1000;
 
+const SPORT_ALIASES = {
+  baseball: "mlb",
+  soccer: "futbol",
+  football: "futbol",
+  basket: "nba",
+  basketball: "nba",
+};
+
+function resolveSportIdKey(sportKey, raw) {
+  const fromRaw = raw?.sportId || raw?.sport || raw?.moduleSport;
+  const key = String(sportKey || fromRaw || "").toLowerCase().trim();
+  return SPORT_ALIASES[key] || key;
+}
+
+function resolvePickSportId(pick) {
+  if (!pick) return "";
+  return resolveSportIdKey(pick.sportId || pick._sport, pick.raw || pick);
+}
+
 function sportIconHtml(sportKey) {
-  const key = String(sportKey || "").toLowerCase();
-  if (key === "tennis") {
-    return '<img src="/tennis-ball.svg" class="sport-svg-icon" alt="tennis">';
-  }
+  const key = resolveSportIdKey(sportKey);
   if (key === "wnba") {
-    return '<img src="/wnba-ball.svg" class="sport-svg-icon sport-svg-icon--wnba" alt="WNBA">';
+    return '<span class="sport-emoji-icon sport-emoji-icon--wnba" aria-hidden="true">\u{1F3C0}</span>';
   }
-  return MODULES[key]?.icon || "\u{1F3C5}";
+  const icon = MODULES[key]?.icon;
+  if (!icon) return '<span class="sport-emoji-icon" aria-hidden="true">\u{1F3C5}</span>';
+  if (icon.length > 1 || (icon.codePointAt(0) || 0) > 127) {
+    return `<span class="sport-emoji-icon" aria-hidden="true">${icon}</span>`;
+  }
+  return `<span class="sport-text-icon" aria-hidden="true">${esc(icon)}</span>`;
+}
+
+function renderPickSportIcon(pick, variant = "title") {
+  const sportId = resolvePickSportId(pick);
+  const variantClass = {
+    title: "dp-title-sport-icon",
+    card: "dp-card-sport-icon",
+    banner: "best-pick-label-icon",
+    section: "top-picks-sport-icon",
+  }[variant] || "dp-title-sport-icon";
+  const label = MODULES[sportId]?.name || sportId || "Deporte";
+  return `<span class="${variantClass}" title="${esc(label)}" aria-label="${esc(label)}">${sportIconHtml(sportId)}</span>`;
 }
 
 function setSportIconElement(element, sportKey) {
@@ -1535,6 +1568,7 @@ function resolveEventForPick(raw, lookup) {
 }
 
 function normalizePick(raw, sportId, lookup) {
+  sportId = resolveSportIdKey(sportId, raw);
   const event = resolveEventForPick(raw, lookup);
   const rawLabel = parsPickLabel(raw);
   const downgradedRunline = shouldDowngradeMlbRunline(raw, sportId, rawLabel);
@@ -2403,9 +2437,9 @@ function renderPickCard(pick, index) {
       ${index < 3 ? `<span class="pick-rank">${medals[index]}</span>` : ""}
       ${pick.lineTrapActive ? renderLineTrapBlock(pick.raw || pick) : ""}
       <div class="pick-sport-row">
-        <span class="pick-icon">${esc(pick.icono)}</span>
+        ${renderPickSportIcon(pick, "title")}
         <div>
-          <div class="pick-deporte">${renderTimeLine(pick)}</div>
+          <div class="pick-deporte">${esc(pick.deporte || MODULES[resolvePickSportId(pick)]?.name || "")} · ${renderTimeLine(pick)}</div>
           <div class="pick-partido">${esc(pick.partido)}</div>
         </div>
       </div>
@@ -2440,7 +2474,11 @@ function getLoadedModuleIds() {
 /** Picks de todos los módulos ya cargados (independiente del módulo activo en el desk). */
 function getAllLoadedPicks() {
   return getLoadedModuleIds().flatMap((id) =>
-    (PICKS_CACHE[id] || []).map((pick) => ({ ...pick, _sport: id }))
+    (PICKS_CACHE[id] || []).map((pick) => ({
+      ...pick,
+      _sport: id,
+      sportId: pick.sportId || id,
+    }))
   );
 }
 
@@ -2458,6 +2496,8 @@ function renderTopPicks() {
   const featuredPicks = valuePicks.length ? valuePicks : alternativas;
 
   if (!container) return allPicks;
+
+  container.className = "picks-grid top-picks-host";
 
   if (!loadedModules.length) {
     container.innerHTML = '<div class="loading-copy">Carga uno o más módulos para ver TOP PICKS de todos los deportes.</div>';
@@ -2485,11 +2525,11 @@ function renderTopPicks() {
       const m = MODULES[id];
       return `<div class="top-picks-sport-block" data-sport="${id}">
         <div class="top-picks-sport-header">
-          <span class="top-picks-sport-icon">${sportIconHtml(id)}</span>
+          ${renderPickSportIcon({ sportId: id, _sport: id }, "section")}
           <h3 class="top-picks-sport-title" style="color:${m.color}">${esc(m.name)}</h3>
           <span class="top-picks-sport-count">${sportPicks.length} ${showAlternatives ? "alternativa" : "pick"}${sportPicks.length === 1 ? "" : "s"}</span>
         </div>
-        <div class="picks-grid top-picks-sport-grid">${sportPicks.map((pick, index) => renderPickCard({ ...pick, _homeTopPick: true }, index)).join("")}</div>
+        <div class="top-picks-sport-grid">${sportPicks.map((pick, index) => renderPickCard({ ...pick, _homeTopPick: true }, index)).join("")}</div>
       </div>`;
     })
     .join("");
@@ -3386,11 +3426,21 @@ function renderBestPickBanner(pick, index) {
   const absEdge = Math.abs(edge);
   const edgePct = Number.isFinite(edge) ? `${(absEdge * 100).toFixed(1)}%` : null;
   const edgeClass = absEdge >= 0.2 ? "edge--alto" : absEdge >= 0.1 ? "edge--medio" : "edge--bajo";
+  const sportId = resolvePickSportId(pick);
+  const sportName = MODULES[sportId]?.name || pick.deporte || "";
   return `
-    <div class="best-pick-banner ${rank.bannerClass}" data-rank-tier="${rank.tier}">
+    <div class="best-pick-banner ${rank.bannerClass}" data-rank-tier="${rank.tier}" data-sport="${esc(sportId)}">
       <span class="best-pick-crown ${rank.crownClass}" title="${esc(rank.rankLabel)}">${rank.crown}</span>
       <div class="best-pick-body">
-        <div class="best-pick-label"><span class="best-pick-rank-tag">${esc(rank.rankLabel)}</span> · PICK DEL DÍA · ${renderTimeLine(pick)}</div>
+        <div class="best-pick-label">
+          ${renderPickSportIcon(pick, "banner")}
+          <span class="best-pick-rank-tag">${esc(rank.rankLabel)}</span>
+          <span class="best-pick-sport-name">${esc(sportName)}</span>
+          <span class="best-pick-label-sep">·</span>
+          <span class="best-pick-label-kind">PICK DEL DÍA</span>
+          <span class="best-pick-label-sep">·</span>
+          <span class="best-pick-label-time">${renderTimeLine(pick)}</span>
+        </div>
         <div class="best-pick-partido">${esc(pick.partido)}</div>
         <div class="best-pick-pick">${esc(pick.pick)}</div>
         ${whyText
@@ -3413,14 +3463,16 @@ function renderBestPickBanner(pick, index) {
           <button class="pick-detail-btn best-pick-detail-btn" type="button" data-pick-detail-open="${esc(pick.id)}">Detalle completo</button>
         </div>
       </div>
-      <div class="best-pick-right">
-        <div class="best-pick-ev">EV ${esc(pick.ev)}</div>
-        ${edgePct ? `<div class="best-pick-edge ${edgeClass}">Edge ${esc(edgePct)}</div>` : ""}
-        <div class="best-pick-conf">${Math.round(pick.confianza)}% confianza</div>
-        <div class="best-pick-odds">
-          <div class="best-pick-books">${renderBookOddsRow(pick.raw || {}, "compact")}</div>
+      <aside class="best-pick-right">
+        <div class="best-pick-stats">
+          <div class="best-pick-ev">EV ${esc(pick.ev)}</div>
+          ${edgePct ? `<div class="best-pick-edge ${edgeClass}">Edge ${esc(edgePct)}</div>` : ""}
+          <div class="best-pick-conf">${Math.round(pick.confianza)}% confianza</div>
         </div>
-      </div>
+        <div class="best-pick-odds">
+          ${renderBestPickOddsMarkup(pick)}
+        </div>
+      </aside>
     </div>
   `;
 }
@@ -3872,7 +3924,53 @@ function extractBookOdds(raw) {
     else if (winamaxOdd != null) winamax = winamaxOdd;
   }
 
+  if (bet365 == null && winamax == null) {
+    const single = parsOdds(raw);
+    if (single != null) {
+      const bookKey = String(
+        raw?.valueBook || raw?.bookmaker || raw?.book ||
+        comparison.bestBookmakerKey || comparison.bestBookmaker || raw?.casa || ""
+      ).toLowerCase();
+      if (bookKey.includes("winamax")) winamax = single;
+      else if (bookKey.includes("bet365") || bookKey.includes("365")) bet365 = single;
+      else if (bookKey.includes("mercado") || bookKey.includes("market")) bet365 = single;
+      else bet365 = single;
+    }
+  }
+
   return { bet365, winamax };
+}
+
+function buildOddsRawFromPick(pick) {
+  const raw = pick?.raw || {};
+  return {
+    ...raw,
+    odds: raw.odds ?? pick?.cuota,
+    bestOdds: raw.bestOdds ?? pick?.cuota,
+    casa: raw.casa ?? pick?.casa,
+  };
+}
+
+function renderBestPickOddsMarkup(pick) {
+  const merged = buildOddsRawFromPick(pick);
+  const houses = extractBookOdds(merged);
+  const cuota = pick?.cuota ?? parsOdds(merged);
+  const hasDual = houses.bet365 != null && houses.winamax != null;
+  const booksHtml = renderBookOddsRow(merged, "compact");
+
+  if (hasDual && booksHtml) {
+    return `<div class="best-pick-books-inner">${booksHtml}</div>`;
+  }
+
+  if (cuota != null) {
+    const casaLabel = pick?.casa && pick.casa !== "Mercado" ? pick.casa : "Cuota analizada";
+    return `<div class="best-pick-cuota-block">
+      <div class="best-pick-cuota">${formatOdds(cuota)}</div>
+      <div class="best-pick-casa">${esc(casaLabel)}</div>
+    </div>`;
+  }
+
+  return booksHtml ? `<div class="best-pick-books-inner">${booksHtml}</div>` : "";
 }
 
 function renderBookOddsRow(raw, style = "dany") {
@@ -3909,14 +4007,33 @@ function renderBookOddsRow(raw, style = "dany") {
         ${bestIsWmx ? `<div class="t-best-tag f-book-tag">${bestTag}</div>` : ""}
       </div>` : "";
 
-  return `
-    <div class="t-odds-row f-odds-compare${compactCls}">
-      ${wmxHtml}
+  const b365Html = b365 != null ? `
       <div class="t-odds-book f-book-cell ${bestIsB365 ? "best-book is-best" : ""}">
         <div class="t-odds-book-name f-book-name">\u{1F535} BET365</div>
         <div class="t-odds-book-val f-book-odd">${formatOdds(b365)}</div>
         ${bestIsB365 ? `<div class="t-best-tag f-book-tag">${bestTag}</div>` : ""}
-      </div>
+      </div>` : "";
+
+  if (!b365Html && !wmxHtml) {
+    const single = parsOdds(raw);
+    if (single != null) {
+      const bookLabel = String(raw?.valueBook || raw?.bookmaker || raw?.casa || "CUOTA").toUpperCase();
+      return `
+        <div class="t-odds-row f-odds-compare${compactCls} is-single">
+          <div class="t-odds-book f-book-cell is-best best-book">
+            <div class="t-odds-book-name f-book-name">${esc(bookLabel)}</div>
+            <div class="t-odds-book-val f-book-odd">${formatOdds(single)}</div>
+          </div>
+        </div>
+      `;
+    }
+    return "";
+  }
+
+  return `
+    <div class="t-odds-row f-odds-compare${compactCls}">
+      ${wmxHtml}
+      ${b365Html}
     </div>
   `;
 }
@@ -7712,7 +7829,7 @@ setInterval(() => {
   refreshTrackerPanelIfDue(false);
 }, 5 * 60 * 1000);
 </script>
-<script src="/dany-picks-render.js?v=mobile-schedule-1"></script>
+<script src="/dany-picks-render.js?v=home-sport-icons-1"></script>
 <script>
 if (typeof installDanyPicksUI === "function") installDanyPicksUI();
 </script>

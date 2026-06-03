@@ -1,3 +1,5 @@
+const TOTALS_MARKETS = new Set(["game_total", "team_total_home", "team_total_away"]);
+
 function pickScore(pick) {
   const score = Number(pick?.score_final ?? pick?.score ?? pick?.confidence ?? 0);
   return Number.isFinite(score) ? score : 0;
@@ -13,6 +15,16 @@ function isTeamTotalMarket(market) {
   return market === "team_total_home" || market === "team_total_away";
 }
 
+function isTotalsMarket(market) {
+  return TOTALS_MARKETS.has(market);
+}
+
+function totalsMarketPriority(market) {
+  if (market === "game_total") return 3;
+  if (market === "team_total_home" || market === "team_total_away") return 2;
+  return 0;
+}
+
 function findLowerScoredPick(left, right) {
   return pickScore(left) >= pickScore(right) ? right : left;
 }
@@ -25,6 +37,38 @@ function isGameTotalTeamTotalContradiction(gamePick, teamPick) {
   if (!gameSide || !teamSide) return false;
 
   return gameSide !== teamSide;
+}
+
+function collapseRedundantSameSideTotals(picks) {
+  const totals = picks.filter((pick) => isTotalsMarket(pick?.market));
+  if (totals.length <= 1) {
+    return { coherent: picks, removed: [] };
+  }
+
+  const sides = [...new Set(totals.map((pick) => normalizeSide(pick.side)).filter(Boolean))];
+  if (sides.length !== 1) {
+    return { coherent: picks, removed: [] };
+  }
+
+  const best = [...totals].sort((a, b) => {
+    const scoreDiff = pickScore(b) - pickScore(a);
+    if (scoreDiff !== 0) return scoreDiff;
+    return totalsMarketPriority(b.market) - totalsMarketPriority(a.market);
+  })[0];
+
+  const removed = totals
+    .filter((pick) => pick !== best)
+    .map((pick) => ({
+      ...pick,
+      coherence: {
+        reason: "redundant_totals_same_direction",
+        kept: best,
+        conflictWith: best,
+      },
+    }));
+
+  const coherent = picks.filter((pick) => !isTotalsMarket(pick?.market) || pick === best);
+  return { coherent, removed };
 }
 
 export function resolvePickCoherence(picks, ctx = {}) {
@@ -51,15 +95,21 @@ export function resolvePickCoherence(picks, ctx = {}) {
     }
   }
 
-  const coherent = picks.filter((pick) => !removedSet.has(pick));
-  const removed = picks
+  let coherent = picks.filter((pick) => !removedSet.has(pick));
+  const directionRemoved = picks
     .filter((pick) => removedSet.has(pick))
     .map((pick) => ({
       ...pick,
       coherence: removedReasons.get(pick) || null,
     }));
 
-  return { coherent, removed };
+  const { coherent: afterCollapse, removed: collapseRemoved } = collapseRedundantSameSideTotals(coherent);
+  coherent = afterCollapse;
+
+  return {
+    coherent,
+    removed: [...directionRemoved, ...collapseRemoved],
+  };
 }
 
 export function buildCoherenceCtx(ctx, homeProjectedPts, awayProjectedPts) {
