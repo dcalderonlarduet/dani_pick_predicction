@@ -352,7 +352,19 @@ const CONF_MIN_BY_SPORT = { wnba: 48, mlb: 50, nba: 55, nfl: 52, football: 55, f
 const BEST_PICK_CONF_MIN = 68;
 const TOP_PICK_CONF_MIN = 58;
 const TOP_PICK_CONF_MIN_BY_SPORT = { wnba: 48, mlb: 50, nba: 55, nfl: 52, football: 55, futbol: 55 };
-const BEST_PICK_CONF_MIN_BY_SPORT = { mlb: 65, nba: 63, wnba: 55, nfl: 63, football: 63, futbol: 63 };
+const BEST_PICK_CONF_MIN_BY_SPORT = { mlb: 70, nba: 65, wnba: 60, nfl: 68, football: 72, futbol: 72 };
+const SPORT_THRESHOLDS = {
+  mlb:     { scoreVerde: 62, confMin: 50, confPodio: 70, edgeMin: 0.03 },
+  futbol:  { scoreVerde: 62, confMin: 55, confPodio: 72, edgeMin: 0.05 },
+  football:{ scoreVerde: 62, confMin: 55, confPodio: 72, edgeMin: 0.05 },
+  nba:     { scoreVerde: 55, confMin: 55, confPodio: 65, edgeMin: 0.04 },
+  wnba:    { scoreVerde: 57, confMin: 48, confPodio: 60, edgeMin: 0.04 },
+  nfl:     { scoreVerde: 62, confMin: 52, confPodio: 68, edgeMin: 0.04 },
+};
+const DEFAULT_SPORT_THRESHOLDS = { scoreVerde: 62, confMin: 55, confPodio: 68, edgeMin: 0.04 };
+function getThresholdsBySport(sport) {
+  return SPORT_THRESHOLDS[String(sport || "").toLowerCase()] || DEFAULT_SPORT_THRESHOLDS;
+}
 
 function getConfMin(sportId) {
   return CONF_MIN_BY_SPORT[sportId] ?? CONF_MIN;
@@ -602,10 +614,11 @@ function qualifiesBestPickOfDay(pick) {
   if (pickHasConfEdgeConflict(pick)) return false;
   const ev = pickEvValue(pick);
   const sport = pickSportKey(pick);
+  const thr = getThresholdsBySport(sport);
   const confMin = getBestPickConfMin(sport);
   return (
     pickConfidenceValue(pick) >= confMin ||
-    Math.abs(pickEdgeValue(pick)) >= BEST_PICK_EDGE_MIN ||
+    Math.abs(pickEdgeValue(pick)) >= thr.edgeMin ||
     (ev != null && ev >= pickValueEvMin(pick) + 0.02)
   );
 }
@@ -764,9 +777,40 @@ function commitModuleData(moduleId, data, { fetchedAt = Date.now(), fromClientCa
   syncModuleAvailability();
   ensureActiveModuleEnabled();
   if (!fromClientCache) persistClientModuleCache(moduleId);
+  // Auto-add picks verdes al tracker (fire-and-forget, servidor deduplica)
+  autoAddGreenPicksToTracker(moduleId).catch(() => {});
 }
 const TRACKER_REFRESH_MS = 15 * 60 * 1000;
 const TRACKER_SETTLE_REFRESH_MS = 5 * 60 * 1000;
+const _autoAddedPickIds = new Set();
+
+async function autoAddGreenPicksToTracker(moduleId) {
+  if (moduleId === "quiniela") return;
+  const picks = (PICKS_CACHE[moduleId] || []).filter(
+    (pick) => pick.estado === "verde" && pickIsValueCandidate(pick)
+  );
+  if (!picks.length) return;
+  let anyAdded = false;
+  for (const pick of picks) {
+    if (_autoAddedPickIds.has(String(pick.id))) continue;
+    try {
+      const res = await fetch("/api/picks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildTrackerPayloadFromPick(pick)),
+      });
+      const data = await readJsonSafe(res);
+      if (res.ok) {
+        _autoAddedPickIds.add(String(pick.id));
+        if (data.created !== false) anyAdded = true;
+      }
+    } catch { /* silent */ }
+  }
+  if (anyAdded) {
+    await loadStatsPanel({ settle: false, force: true });
+    if (typeof updateHomePicksView === "function") updateHomePicksView();
+  }
+}
 
 const SPORT_ALIASES = {
   baseball: "mlb",
@@ -2196,6 +2240,200 @@ function renderPitcherPendingBadge(pick, { compact = false } = {}) {
   return `<span class="pitcher-pending-badge${compact ? " is-compact" : ""}" title="${esc(title)}">⚠ ${esc(label)}</span>`;
 }
 
+function findGameForPick(pick) {
+  const sport = pickSportKey(pick);
+  const matchId = pick?.raw?.matchId || pick?.raw?.gameId || pick?.raw?.id;
+  if (!matchId || !sport) return null;
+  const events = EVENTS_CACHE[sport] || [];
+  for (const event of events) {
+    const game = event?.raw;
+    if (!game) continue;
+    const id = String(game.id || game.gameId || game.gamePk || "");
+    if (id && id === String(matchId)) return game;
+  }
+  return null;
+}
+
+function computePickScoreDisplay(pick) {
+  const base = pickScoreValue(pick);
+  if (!Number.isFinite(base) || base === 0) return { score: base, adjusted: base, penalty: 0, hasAdjustment: false };
+  const game = findGameForPick(pick);
+  const proCtx = game?.proContext || pick?.raw?.proContext || {};
+  const flags = Array.isArray(proCtx.flags) ? proCtx.flags : [];
+  const homeForm = game?.context?.home?.form;
+  const awayForm = game?.context?.away?.form;
+  const teamSide = pick?.raw?.teamSide;
+  const ownForm = teamSide === 'home' ? homeForm : teamSide === 'away' ? awayForm : null;
+  let penalty = 0;
+  if (flags.some((f) => String(f).includes('ERA_REGRESSION_RISK'))) penalty += 4;
+  if ([homeForm, awayForm].some((f) => String(f?.venueDataFlag || '').includes('EARLY_SEASON'))) penalty += 3;
+  if (pick?.raw?.bridgeLowConfidence) penalty += 5;
+  if (pick?.raw?.motivationFlag) penalty += 3;
+  if (Number.isFinite(ownForm?.formFactor) && ownForm.formFactor < 0.92) penalty += 3;
+  const adjusted = Math.min(95, Math.max(40, base - penalty));
+  return { score: base, adjusted, penalty, hasAdjustment: penalty > 0 };
+}
+
+function flagBadge(text, type) {
+  return `<span class="pick-flag-badge ${type}">${text}</span>`;
+}
+
+function buildPickFlagBadges(pick) {
+  const sport = pickSportKey(pick);
+  const raw = pick.raw || {};
+  const game = findGameForPick(pick);
+  const proCtx = game?.proContext || raw.proContext || {};
+  const flags = Array.isArray(proCtx.flags) ? proCtx.flags : [];
+  const parts = [];
+
+  if (sport === 'mlb' && game) {
+    const hp = game.homePitcher;
+    const ap = game.awayPitcher;
+    const homeWrc = game.homeTeam?.offense?.wrcPlus;
+    const awayWrc = game.awayTeam?.offense?.wrcPlus;
+    if (Number.isFinite(homeWrc)) parts.push(flagBadge(`Bateo local: ${homeWrc > 105 ? 'muy bueno' : homeWrc >= 95 ? 'normal' : 'flojo'} (índice ${homeWrc})`, 'info'));
+    if (Number.isFinite(awayWrc)) parts.push(flagBadge(`Bateo visitante: ${awayWrc > 105 ? 'muy bueno' : awayWrc >= 95 ? 'normal' : 'flojo'} (índice ${awayWrc})`, 'info'));
+    if (Number.isFinite(hp?.recentStartsEra4w) && Number.isFinite(hp?.recentStartsEra) && Math.abs(hp.recentStartsEra4w - hp.recentStartsEra) > 0.5)
+      parts.push(flagBadge(`Pitcher local: media real ${hp.recentStartsEra4w.toFixed(2)} (últimas 4 salidas)`, 'warning'));
+    if (Number.isFinite(ap?.recentStartsEra4w) && Number.isFinite(ap?.recentStartsEra) && Math.abs(ap.recentStartsEra4w - ap.recentStartsEra) > 0.5)
+      parts.push(flagBadge(`Pitcher visitante: media real ${ap.recentStartsEra4w.toFixed(2)} (últimas 4 salidas)`, 'warning'));
+    if (flags.some((f) => f.includes('ERA_REGRESSION_RISK')))
+      parts.push(flagBadge('⚠️ El pitcher parece mejor de lo que es — puede rendir peor', 'danger'));
+    const po = proCtx.parkOuRecord;
+    if (po?.totalGames >= 15) {
+      const uPct = Math.round(po.ouRate * 100);
+      const oPct = po.totalGames > 0 ? Math.round((po.overCount / po.totalGames) * 100) : 0;
+      const cls = uPct > 60 ? 'danger' : oPct > 60 ? 'good' : 'info';
+      const trend = uPct > 60 ? `suelen acabar con pocas carreras (${uPct}%)` : oPct > 60 ? `suelen acabar con muchas carreras (${oPct}%)` : 'sin tendencia clara';
+      parts.push(flagBadge(`🏟️ En este estadio ${trend} — ${po.totalGames} partidos analizados`, cls));
+    }
+    const sc = proCtx.seriesContext;
+    if (sc?.gamesFound >= 2 && Number.isFinite(sc.avgTotalRuns)) {
+      const avg = sc.avgTotalRuns;
+      const emoji = avg > 9 ? '🔥' : avg < 7 ? '🧊' : '';
+      const label = avg > 9 ? 'partidos con muchas carreras' : avg < 7 ? 'partidos cerrados' : 'partidos equilibrados';
+      parts.push(flagBadge(`${emoji} Últimos juegos entre estos dos: ${avg.toFixed(1)} carreras de media (${label})`, 'info'));
+    }
+  }
+
+  if (sport === 'futbol') {
+    const scores = raw.scores || {};
+    const K = Number(scores.K_descanso);
+    if (Number.isFinite(K) && K !== 0) {
+      const rHome = Number(scores.restDaysHome);
+      const rAway = Number(scores.restDaysAway);
+      const cls = (raw.betSide === 'home' && K > 0) || (raw.betSide === 'away' && K < 0) ? 'good' : K !== 0 ? 'danger' : 'info';
+      const label = Number.isFinite(rHome) && Number.isFinite(rAway)
+        ? `💤 Descanso: local ${rHome} días vs visitante ${rAway} días`
+        : `💤 Ventaja de descanso: ${K > 0 ? '+' : ''}${K} días`;
+      parts.push(flagBadge(label, cls));
+    }
+    if (Number.isFinite(raw.xgProxy)) parts.push(flagBadge(`⚽ Goles esperados estimados: ${raw.xgProxy.toFixed(2)}`, 'info'));
+    const L = Number(raw.scores?.L_h2h ?? scores.L_h2h);
+    if (Number.isFinite(L) && L > 0) {
+      const side = raw.betSide === 'home' ? 'local' : raw.betSide === 'away' ? 'visitante' : 'favorecido';
+      parts.push(flagBadge(`📊 Historial entre ellos: favorece al ${side}`, 'good'));
+    }
+  }
+
+  if (sport === 'nba' && game) {
+    const hf = game.context?.home?.form;
+    const af = game.context?.away?.form;
+    for (const [form, label] of [[hf, 'Local'], [af, 'Visit.']]) {
+      if (Number.isFinite(form?.formFactor) && form.formFactor !== 1) {
+        const pct = Math.round((form.formFactor - 1) * 100);
+        const cls = pct >= 5 ? 'good' : pct <= -5 ? 'danger' : 'info';
+        const trend = pct >= 5 ? 'en racha' : pct <= -5 ? 'en bajón' : 'forma normal';
+        parts.push(flagBadge(`📈 ${label} ${trend}: ${pct > 0 ? '+' : ''}${pct}% vs su media esta temporada`, cls));
+      }
+      if (String(form?.venueDataFlag || '').includes('EARLY_SEASON'))
+        parts.push(flagBadge(`⚠️ ${label}: pocos partidos en casa/fuera aún — datos de campo limitados`, 'warning'));
+    }
+  }
+
+  if (sport === 'wnba' && game) {
+    const hf = game.context?.home?.form;
+    const af = game.context?.away?.form;
+    for (const [form, label] of [[hf, 'Local'], [af, 'Visit.']]) {
+      if (String(form?.venueDataFlag || '').includes('EARLY_SEASON')) {
+        const cnt = form.venueGamesCount;
+        const cntLabel = cnt ? ` — solo ${cnt.home} en casa, ${cnt.away} fuera` : '';
+        parts.push(flagBadge(`⚠️ ${label}: inicio de temporada${cntLabel}, estadísticas en casa/fuera todavía escasas`, 'warning'));
+      }
+    }
+  }
+
+  if (sport === 'nfl' && game) {
+    const hToDiff = game.context?.home?.form?.turnoverDifferential;
+    const aToDiff = game.context?.away?.form?.turnoverDifferential;
+    if (Number.isFinite(hToDiff) || Number.isFinite(aToDiff)) {
+      const hLabel = Number.isFinite(hToDiff) ? (hToDiff >= 0 ? `+${hToDiff}` : `${hToDiff}`) : 'N/D';
+      const aLabel = Number.isFinite(aToDiff) ? (aToDiff >= 0 ? `+${aToDiff}` : `${aToDiff}`) : 'N/D';
+      const pickToDiff = raw.teamSide === 'home' ? hToDiff : aToDiff;
+      const cls = Number.isFinite(pickToDiff) ? (pickToDiff >= 5 ? 'good' : pickToDiff <= -5 ? 'danger' : 'info') : 'info';
+      parts.push(flagBadge(`🏈 Balones robados (diferencial): local ${hLabel} / visitante ${aLabel}`, cls));
+    }
+  }
+
+  if (sport === 'quiniela') {
+    if (raw.motivationFlag) parts.push(flagBadge('⚠️ Algún equipo podría no jugarse nada — resultado menos predecible', 'warning'));
+    if (raw.bridgeLowConfidence) parts.push(flagBadge('⚠️ El partido no se encontró con exactitud en nuestra base — pronóstico menos fiable', 'danger'));
+    if (Number.isFinite(raw.bridgeMatchScore) && raw.bridgeMatchScore < 0.7 && !raw.bridgeLowConfidence)
+      parts.push(flagBadge(`Partido localizado con ${Math.round(raw.bridgeMatchScore * 100)}% de certeza`, 'warning'));
+  }
+
+  return parts.length ? `<div class="pick-flag-badges-block">${parts.join('')}</div>` : '';
+}
+
+function buildEnrichedRationaleAdditions(pick) {
+  const sport = pickSportKey(pick);
+  const raw = pick.raw || {};
+  const game = findGameForPick(pick);
+  const additions = [];
+
+  if (sport === 'mlb' && game) {
+    const proCtx = game.proContext || {};
+    const homeWrc = game.homeTeam?.offense?.wrcPlus;
+    if (Number.isFinite(homeWrc))
+      additions.push(`El lineup local tiene wRC+ de ${homeWrc} (${homeWrc >= 105 ? 'sobre la media' : homeWrc >= 95 ? 'en la media' : 'bajo la media'}).`);
+    const po = proCtx.parkOuRecord;
+    if (po?.totalGames >= 15) {
+      const uPct = Math.round(po.ouRate * 100);
+      if (uPct > 60) additions.push(`El parque favorece el Under esta temporada (${uPct}% en ${po.totalGames} partidos).`);
+      else if (100 - uPct > 60) additions.push(`El parque favorece el Over esta temporada (${100 - uPct}% en ${po.totalGames} partidos).`);
+    }
+    const flags = Array.isArray(proCtx.flags) ? proCtx.flags : [];
+    if (flags.includes('ERA_REGRESSION_RISK_HOME') && game.homePitcher?.eraRegressionGap)
+      additions.push(`El pitcher local muestra divergencia ERA/xFIP de ${game.homePitcher.eraRegressionGap.toFixed(1)} puntos.`);
+    if (flags.includes('ERA_REGRESSION_RISK_AWAY') && game.awayPitcher?.eraRegressionGap)
+      additions.push(`El pitcher visitante muestra divergencia ERA/xFIP de ${game.awayPitcher.eraRegressionGap.toFixed(1)} puntos.`);
+  }
+
+  if (sport === 'futbol') {
+    const scores = raw.scores || {};
+    const rHome = Number(scores.restDaysHome);
+    const rAway = Number(scores.restDaysAway);
+    if (Number.isFinite(rHome) && Number.isFinite(rAway) && rHome !== rAway)
+      additions.push(`El equipo local lleva ${rHome} días de descanso vs ${rAway} del visitante.`);
+    const L = Number(scores.L_h2h);
+    if (Number.isFinite(L) && L >= 3) {
+      const side = raw.betSide === 'home' ? 'local' : raw.betSide === 'away' ? 'visitante' : 'favorecido';
+      additions.push(`El H2H favorece al ${side} con ventaja histórica confirmada.`);
+    }
+  }
+
+  if (sport === 'nba' && game) {
+    const hf = game.context?.home?.form;
+    if (Number.isFinite(hf?.formFactor)) {
+      const pct = Math.round((hf.formFactor - 1) * 100);
+      if (Math.abs(pct) >= 5)
+        additions.push(`El equipo local está ${pct > 0 ? 'en racha: +' : 'en bajón: -'}${Math.abs(pct)}% sobre su media de temporada en los últimos 5 partidos.`);
+    }
+  }
+
+  return additions.join(' ');
+}
+
 function renderPickDetailModalContent(pick) {
   const isAlt = pick.estado === "amarillo";
   const factors = collectPickFactors(pick);
@@ -2206,6 +2444,9 @@ function renderPickDetailModalContent(pick) {
   if (pick.modelProbability != null) probabilityParts.push(`Modelo ${formatMaybePercent(pick.modelProbability, 0)}`);
   if (pick.impliedProbability != null) probabilityParts.push(`Cuota ${formatMaybePercent(pick.impliedProbability, 0)} impl.`);
   const probabilityText = probabilityParts.join(" vs ");
+  const flagBadgesHtml = buildPickFlagBadges(pick);
+  const enrichedAdditions = buildEnrichedRationaleAdditions(pick);
+  const scoreDisp = computePickScoreDisplay(pick);
 
   return `
     <div class="pick-detail-head">
@@ -2220,15 +2461,17 @@ function renderPickDetailModalContent(pick) {
       <span class="pick-detail-badge ${isAlt ? "alt" : "primary"}"><strong>${esc(getPickTierLabel(pick))}</strong></span>
       <span class="pick-detail-badge"><strong>${Math.round(pick.confianza)}%</strong> confianza</span>
       <span class="pick-detail-badge"><strong>EV ${esc(pick.ev)}</strong></span>
+      ${scoreDisp.score > 0 ? `<span class="pick-detail-badge" title="${scoreDisp.hasAdjustment ? `Confianza original: ${Math.round(scoreDisp.score)} · bajada por alertas del modelo` : 'Confianza del modelo'}"><strong>Confianza ${Math.round(scoreDisp.adjusted)}/100</strong>${scoreDisp.hasAdjustment ? ' ⚠️' : ''}</span>` : ''}
       <span class="pick-detail-badge books-badge"><strong>Casas</strong></span>
       <span class="pick-detail-badge ${pricing.className}"><strong>${esc(pricing.label)}</strong></span>
       ${pick.lineTrapActive ? `<span class="pick-detail-badge line-trap-detail-badge"><strong>🪤 TRAMPA</strong></span>` : ""}
     </div>
+    ${flagBadgesHtml}
     ${pick.lineTrapActive ? renderLineTrapBlock(pick.raw || pick) : ""}
     <div class="pick-detail-layout">
       <div class="pick-detail-block">
         <div class="pick-detail-block-title">Por que sale este pronostico</div>
-        <div class="pick-detail-copy">${esc(getPickTierReason(pick))}</div>
+        <div class="pick-detail-copy">${esc(getPickTierReason(pick))}${enrichedAdditions ? ' ' + esc(enrichedAdditions) : ''}</div>
         ${pick.lineTrapActive && pick.lineTrapExplanation ? `
           <div class="pick-detail-block" style="margin-top:12px">
             <div class="pick-detail-block-title">Por qué es trampa</div>
@@ -2431,6 +2674,7 @@ function renderPickCard(pick, index) {
   const tracked = findTrackedPickRecord(pick);
   const isMl = isMlbMoneylinePick(pick);
   const pickLabelHtml = isMl ? renderMlbPickLabelHtml(pick.pick) : esc(pick.pick);
+  const scoreDisp = computePickScoreDisplay(pick);
 
   return `
     <article class="pick-card ${isAlt ? "pick-amarillo" : "pick-verde"}${isMl ? " is-moneyline-pick" : ""}${pick.lineTrapActive ? " has-line-trap" : ""}">
@@ -2451,6 +2695,7 @@ function renderPickCard(pick, index) {
           ${pick.evCapped ? '<div class="ev-cap-note" style="font-size:10px;color:var(--warn);margin-top:4px">EV acotado al 30%</div>' : ""}
           ${pick.raw?.marketDisagreement ? `<div class="ev-cap-note" style="font-size:10px;color:var(--text3);margin-top:4px">Modelo vs mercado: ${esc(String(pick.raw.marketGapPp || ""))} pp</div>` : ""}
           <div class="pick-conf">${Math.round(pick.confianza)}% confianza${isAlt ? " · alternativa" : ""}</div>
+          ${scoreDisp.score > 0 ? `<div class="pick-score-display"><strong>Confianza ${Math.round(scoreDisp.adjusted)}/100</strong>${scoreDisp.hasAdjustment ? `<span class="score-adjusted-note"> · con alertas activas</span>` : ''}</div>` : ''}
           ${renderPickPricingBadge(pick)}
           ${pick.tarjetasInfo ? `<div class="cards-badge" style="margin-top:5px">Tarjetas ${esc(pick.tarjetasInfo.linea != null ? "linea " + pick.tarjetasInfo.linea : "")} ${esc(pick.tarjetasInfo.betSide)}</div>` : ""}
         </div>
@@ -2554,11 +2799,27 @@ function getFeaturedTopPicksForModule(moduleId) {
   return featured.slice(0, 3);
 }
 
+function _pickSemanticKey(pick) {
+  const raw = pick.raw || pick || {};
+  return [
+    normalizeMatchKey(pick.partido || raw._partido || raw.matchLabel || ""),
+    String(raw.mercado || raw.market || raw.marketKey || raw.type || pick.mercado || "").toLowerCase(),
+    String(raw.betSide || raw.teamSide || "").toLowerCase(),
+    normalizeLooseText(pick.pick || raw.selection || raw.seleccion || raw.label || ""),
+  ].join("|");
+}
+
 function getTopPickIdentitySet(moduleId) {
   const ids = new Set();
-  getFeaturedTopPicksForModule(moduleId).forEach((pick) => ids.add(String(pick.id)));
-  collectBestPicksOfDay(PICKS_CACHE[moduleId] || []).forEach((pick) => ids.add(String(pick.id)));
-  return ids;
+  const semKeys = new Set();
+  const addPick = (pick) => {
+    ids.add(String(pick.id));
+    const k = _pickSemanticKey(pick);
+    if (k.replace(/\|+/g, "").trim()) semKeys.add(k);
+  };
+  getFeaturedTopPicksForModule(moduleId).forEach(addPick);
+  collectBestPicksOfDay(PICKS_CACHE[moduleId] || []).forEach(addPick);
+  return { ids, semKeys };
 }
 
 const SPORT_DESK_CONFIG = {
@@ -4862,6 +5123,28 @@ function renderMlbContext(event) {
           ${esc([game.teamStatsPrediction?.winnerSummary, game.teamStatsPrediction?.totalRunsPlain].filter(Boolean).join(" · "))}
         </div>
       ` : ""}
+      ${(() => {
+        const sc = game.proContext?.seriesContext || game.seriesContext;
+        const po = game.proContext?.parkOuRecord || game.parkOuRecord;
+        const flags = game.proContext?.flags || game.flags || [];
+        const parts = [];
+        if (sc?.gamesFound >= 2 && sc.avgTotalRuns != null) {
+          const avg = sc.avgTotalRuns;
+          const badge = avg > 9 ? ' 🔥' : avg < 7 ? ' 🧊' : '';
+          parts.push(`<span class="context-pill">Serie reciente: <strong>${avg.toFixed(1)} carr./partido promedio${badge}</strong></span>`);
+        }
+        if (po?.totalGames >= 15 && po.ouRate != null) {
+          const underPct = Math.round(po.ouRate * 100);
+          const overPct = Math.round((po.overCount / po.totalGames) * 100);
+          const color = po.ouRate > 0.60 ? 'color:#c0392b' : overPct / 100 > 0.60 ? 'color:#27ae60' : 'color:#888';
+          parts.push(`<span class="context-pill" style="${color}">Estadio: ${underPct}% Under / ${overPct}% Over esta temporada (${po.totalGames} partidos)</span>`);
+        }
+        const riskBadges = [];
+        if (game.homePitcher?.eraRegressionRisk) riskBadges.push(`⚠️ ERA/xFIP gap +${game.homePitcher.eraRegressionGap} pts — posible regresión (${game.homeTeam?.name || 'Local'})`);
+        if (game.awayPitcher?.eraRegressionRisk) riskBadges.push(`⚠️ ERA/xFIP gap +${game.awayPitcher.eraRegressionGap} pts — posible regresión (${game.awayTeam?.name || 'Visitante'})`);
+        if (riskBadges.length) parts.push(riskBadges.map(b => `<span class="context-pill" style="background:#fffbe6;color:#8a6500;border:1px solid #f0d060">${esc(b)}</span>`).join(''));
+        return parts.length ? `<div class="context-pills" style="margin-top:6px">${parts.join('')}</div>` : '';
+      })()}
     </div>
   `;
 }
@@ -4915,12 +5198,17 @@ function buildMatchRows(moduleId) {
     if (moduleId !== "futbol") return true;
     return !isQuinielaOfficialMatchLabel(pick.partido);
   });
-  const topPickIds = getTopPickIdentitySet(moduleId);
+  const { ids: topPickIds, semKeys: topPickSemKeys } = getTopPickIdentitySet(moduleId);
+  const isTopPickItem = (item) => {
+    if (topPickIds.has(String(item.id))) return true;
+    const k = _pickSemanticKey(item);
+    return k.replace(/\|+/g, "").trim() ? topPickSemKeys.has(k) : false;
+  };
 
   return events.map((event) => {
     const eventPicks = picks
       .filter((pick) => normalizeMatchKey(pick.partido) === normalizeMatchKey(event.label))
-      .filter((pick) => !topPickIds.has(String(pick.id)));
+      .filter((pick) => !isTopPickItem(pick));
     const analysisMap = new Map();
     collectEventRecommendations(moduleId, event).forEach((entry) => {
       const item = normalizeAnalysis(entry, moduleId, event);
@@ -4939,7 +5227,7 @@ function buildMatchRows(moduleId) {
     });
     const analyses = Array.from(analysisMap.values())
       .sort(sortAnalysisItems)
-      .filter((item) => !topPickIds.has(String(item.id)));
+      .filter((item) => !isTopPickItem(item));
 
     const groupsMap = new Map();
     analyses.forEach((item) => {
@@ -7099,8 +7387,11 @@ function renderTrackerFeedV2(targetId) {
     loss: items.filter((pick) => pick.feedStatus === "loss").length,
     pending: items.filter((pick) => pick.feedStatus === "pending").length,
   };
-  const activeTab = TRACKER_FEED_TAB_STATE[targetId] || null;
-  const normalizedTab = ["all", "win", "loss", "pending"].includes(activeTab) ? activeTab : null;
+  const activeTab = TRACKER_FEED_TAB_STATE[targetId];
+  // "Todos" por defecto si hay picks y el usuario no ha plegado explícitamente
+  const normalizedTab = ["all", "win", "loss", "pending"].includes(activeTab)
+    ? activeTab
+    : (activeTab === null ? null : (items.length ? "all" : null));
   const filteredItems = !normalizedTab
     ? []
     : normalizedTab === "all"
@@ -7824,10 +8115,19 @@ function initScrollTopButton() {
   });
 }
 
+// Refresco estándar cada 5 min
 setInterval(() => {
   if (document.hidden) return;
   refreshTrackerPanelIfDue(false);
 }, 5 * 60 * 1000);
+
+// Refresco rápido cada 90 s cuando hay picks en juego (en vivo o iniciados)
+setInterval(() => {
+  if (document.hidden) return;
+  if (hasTrackerPendingStarted()) {
+    refreshTrackerPanelIfDue(true);
+  }
+}, 90 * 1000);
 </script>
 <script src="/dany-picks-render.js?v=home-sport-icons-1"></script>
 <script>

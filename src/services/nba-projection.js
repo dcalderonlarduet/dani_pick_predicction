@@ -67,10 +67,9 @@ export function projectNbaFirstHalfTotal(ctx) {
 
   const projectedHome = ((pace * homeOff) / 100) * homeDefFactor * homeInj * homeFatigue;
   const projectedAway = ((pace * awayOff) / 100) * awayDefFactor * awayInj * awayFatigue;
-  const formFactor = 1;
   const h2hFactor = ctx.h2h_1h ? ctx.h2h_1h / avg.pts1h : 1;
 
-  const total = (projectedHome + projectedAway) * formFactor * h2hFactor;
+  const total = (projectedHome + projectedAway) * h2hFactor;
   return {
     total,
     muHome: projectedHome,
@@ -87,11 +86,31 @@ export function projectNbaTeamTotal(ctx, side) {
   const offRtg = team?.form?.offRtg1h ?? avg.offRtg;
   const defRtgRival = rival?.form?.defRtg ?? avg.defRtg;
   const matchup = basketballDefenseFactor(defRtgRival, avg.defRtg);
-  const homeAway = side === "home" ? 1.02 : 0.98;
   const fatigue = team?.fatigue?.factor ?? 1;
   const injuryPts = team?.injuryPenalty || 0;
-  const pts = (offRtg / 100) * pace * matchup * homeAway * fatigue - injuryPts;
-  return { pts: Math.max(95, pts), factors_used: Object.keys(FACTOR_WEIGHTS_NBA_TEAM) };
+  const venuePts = side === "home" ? team?.form?.ptsPerGameHome : team?.form?.ptsPerGameAway;
+  const recentScores = team?.form?.recentScores;
+  const recentAvg5 = Array.isArray(recentScores) && recentScores.length >= 2
+    ? recentScores.slice(0, 5).reduce((s, v) => s + Number(v), 0) / Math.min(recentScores.length, 5)
+    : null;
+  const seasonAvg = team?.form?.ptsPerGame ?? (offRtg / 100) * pace;
+  const formFactor = Number.isFinite(recentAvg5) && Number.isFinite(seasonAvg) && seasonAvg > 0
+    ? Math.min(Math.max(recentAvg5 / seasonAvg, 0.88), 1.12)
+    : 1;
+  let pts;
+  if (Number.isFinite(venuePts) && venuePts > 0) {
+    pts = venuePts * matchup * fatigue * formFactor - injuryPts;
+  } else {
+    const homeAway = side === "home" ? 1.02 : 0.98;
+    pts = (offRtg / 100) * pace * matchup * homeAway * fatigue * formFactor - injuryPts;
+  }
+  return {
+    pts: Math.max(95, pts),
+    formFactor: Math.round(formFactor * 1000) / 1000,
+    recentPtsAvg5: recentAvg5 != null ? Math.round(recentAvg5 * 10) / 10 : null,
+    usedVenueData: Number.isFinite(venuePts),
+    factors_used: Object.keys(FACTOR_WEIGHTS_NBA_TEAM),
+  };
 }
 
 export function projectNbaGameTotal(ctx) {

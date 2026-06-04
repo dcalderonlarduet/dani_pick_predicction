@@ -203,7 +203,7 @@ export function applyH2HAdjustment(projectedTotal, ctx) {
 
   if (totals.length < 2) return projectedTotal;
   const h2hAvg = totals.reduce((sum, value) => sum + value, 0) / totals.length;
-  if (!Number.isFinite(h2hAvg) || h2hAvg < 100) return projectedTotal;
+  if (!Number.isFinite(h2hAvg) || h2hAvg < 140) return projectedTotal;
 
   return Math.round((total * 0.7 + h2hAvg * 0.3) * 2) / 2;
 }

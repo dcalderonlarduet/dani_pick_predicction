@@ -490,21 +490,28 @@ function estimatePoisson1x2(lambdaHome, lambdaAway, maxGoals = 8, tau = DIXON_CO
   };
 }
 
+function blendXgWithShots(goalsAvg, shotsOnTargetAvg) {
+  const goals = Number(goalsAvg);
+  const shots = Number(shotsOnTargetAvg);
+  if (!Number.isFinite(goals)) return null;
+  if (!Number.isFinite(shots) || shots <= 0) return goals;
+  const xgProxy = shots * 0.33;
+  return round(goals * 0.60 + xgProxy * 0.40, 2);
+}
+
 function buildMatchModel(homeRecent, awayRecent, venueAdvantage = null) {
-  const expectedHomeGoals = averageOf(
-    [
-      homeRecent?.goalsForAvg,
-      awayRecent?.goalsAgainstAvg,
-    ].map((value) => ({ value })),
+  const homeGoalsBase = averageOf(
+    [homeRecent?.goalsForAvg, awayRecent?.goalsAgainstAvg].map((value) => ({ value })),
     "value"
   );
-  const expectedAwayGoals = averageOf(
-    [
-      awayRecent?.goalsForAvg,
-      homeRecent?.goalsAgainstAvg,
-    ].map((value) => ({ value })),
+  const awayGoalsBase = averageOf(
+    [awayRecent?.goalsForAvg, homeRecent?.goalsAgainstAvg].map((value) => ({ value })),
     "value"
   );
+  const homeXgProxy = blendXgWithShots(homeGoalsBase, homeRecent?.shotsOnTargetAvg);
+  const awayXgProxy = blendXgWithShots(awayGoalsBase, awayRecent?.shotsOnTargetAvg);
+  const expectedHomeGoals = homeXgProxy ?? homeGoalsBase;
+  const expectedAwayGoals = awayXgProxy ?? awayGoalsBase;
   const expectedHomeCorners = averageOf(
     [
       homeRecent?.cornersForAvg,

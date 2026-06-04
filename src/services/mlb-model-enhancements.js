@@ -194,6 +194,29 @@ export function computeRecentStartsEra(gameLogSplits = []) {
   return round((earnedRuns * 9) / innings, 2);
 }
 
+/** ERA ponderada de las últimas 4 salidas (pesos 0.40/0.30/0.20/0.10). */
+export function computeWeightedRecentStartsEra(gameLogSplits = []) {
+  const WEIGHTS = [0.40, 0.30, 0.20, 0.10];
+  const starts = gameLogSplits
+    .slice()
+    .sort((left, right) => String(right.date || "").localeCompare(String(left.date || "")))
+    .filter((entry) => inningsToDecimal(entry?.stat?.inningsPitched) > 0)
+    .slice(0, 4);
+
+  if (!starts.length) return null;
+
+  const usedWeights = WEIGHTS.slice(0, starts.length);
+  const totalWeight = usedWeights.reduce((sum, w) => sum + w, 0);
+  let weightedEraSum = 0;
+  for (let i = 0; i < starts.length; i++) {
+    const ip = inningsToDecimal(starts[i]?.stat?.inningsPitched);
+    const er = asNumber(starts[i]?.stat?.earnedRuns, 0);
+    if (!ip) continue;
+    weightedEraSum += (er * 9 / ip) * (usedWeights[i] / totalWeight);
+  }
+  return round(weightedEraSum, 2);
+}
+
 /**
  * Bateo vs abridor: split por mano, racha ofensiva, contacto/K suave.
  * Devuelve delta de carreras proyectadas y puntos para scoring.

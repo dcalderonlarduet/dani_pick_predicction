@@ -132,6 +132,55 @@ async function buildEspnNflContext({ date, home, away, eventId, events }) {
     : awayRecentScoring.avgAgainst;
   awayForm.gamesPlayed = awayForm.gamesPlayed ?? awayRecentScoring.sample;
 
+  function extractTurnoverDiff(seasonStatsPayload) {
+    const stats = seasonStatsPayload?.teamStatistics ?? seasonStatsPayload?.stats ?? {};
+    const readStat = (keys) => {
+      for (const k of keys) {
+        const v = Number(stats[k]?.value ?? stats[k]);
+        if (Number.isFinite(v)) return v;
+      }
+      return null;
+    };
+    const intCapt = readStat(["defensiveInterceptions", "interceptions", "INT"]);
+    const fumRec = readStat(["fumblesRecovered", "defensiveFumblesRecovered"]);
+    const intThrown = readStat(["passingInterceptions", "interceptionsThrown", "QBInt"]);
+    const fumLost = readStat(["fumblesLost"]);
+    if ([intCapt, fumRec, intThrown, fumLost].every((v) => v === null)) return null;
+    return ((intCapt ?? 0) + (fumRec ?? 0)) - ((intThrown ?? 0) + (fumLost ?? 0));
+  }
+
+  function extractRedZonePct(summaryPayload) {
+    const drives = summaryPayload?.drives?.previous || [];
+    let rzAttempts = 0;
+    let rzScored = 0;
+    for (const drive of drives) {
+      if (drive?.isRedZone || /red zone/i.test(String(drive?.displayResult || ""))) {
+        rzAttempts++;
+        if (/touchdown|field goal|TD|FG/i.test(String(drive?.displayResult || ""))) rzScored++;
+      }
+    }
+    if (rzAttempts >= 3) return rzScored / rzAttempts;
+    const boxTeams = summaryPayload?.boxscore?.teams || [];
+    for (const boxTeam of boxTeams) {
+      const rzStat = (boxTeam?.statistics || []).find((s) =>
+        /redzone/i.test(String(s?.name || "")) || /red zone/i.test(String(s?.displayName || ""))
+      );
+      if (rzStat) {
+        const raw = String(rzStat?.displayValue || "");
+        const parts = raw.match(/(\d+).*?(\d+)/);
+        if (parts) return Number(parts[1]) / Number(parts[2]);
+      }
+    }
+    return null;
+  }
+
+  const homeToDiff = extractTurnoverDiff(homeSeasonStats);
+  const awayToDiff = extractTurnoverDiff(awaySeasonStats);
+  const homeRedZone = extractRedZonePct(summary);
+  if (Number.isFinite(homeToDiff)) homeForm.turnoverDifferential = homeToDiff;
+  if (Number.isFinite(awayToDiff)) awayForm.turnoverDifferential = awayToDiff;
+  if (Number.isFinite(homeRedZone)) homeForm.redZonePct = homeRedZone;
+
   const weather = summary?.gameInfo?.weather || summary?.weather;
   let clima_factor = 1;
   if (weather) {

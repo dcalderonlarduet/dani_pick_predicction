@@ -661,7 +661,7 @@ function buildFootballModelLeanFromOdds(evento, odds, baseCtx, insight) {
       if (!Number.isFinite(bestAvail) || bestAvail <= 1) continue;
 
       const ctx = resolveFootballContext(baseCtx, mercado, betSide);
-      const scBase = calcularScorePick({ ev: 0, drop12h: 0, dropBetSide: null, bet365: b365, winamax: wmx, mercado, betSide, ctx });
+      const scBase = calcularScorePick({ ev: 0, drop12h: 0, dropBetSide: null, bet365: b365, winamax: wmx, mercado, betSide, ctx, nextMatchDate: evento.date });
       const impliedProb = 1 / bestAvail;
 
       // Usar probabilidades Poisson de API-Sports cuando están disponibles
@@ -708,7 +708,7 @@ function buildFootballModelLeanFromOdds(evento, odds, baseCtx, insight) {
       const modelEv = round(modelProb * bestAvail - 1, 3);
       if (modelEv <= 0) continue;
 
-      const sc = calcularScorePick({ ev: modelEv, drop12h: 0, dropBetSide: null, bet365: b365, winamax: wmx, mercado, betSide, ctx });
+      const sc = calcularScorePick({ ev: modelEv, drop12h: 0, dropBetSide: null, bet365: b365, winamax: wmx, mercado, betSide, ctx, nextMatchDate: evento.date });
       const pick = {
         mercado, linea: null, betSide,
         seleccion: formatFootballSelection(mercado, betSide, null, evento),
@@ -745,7 +745,15 @@ function isPickSideCoherentWithModel(betSide, mHome, mDraw, mAway) {
   return true;
 }
 
-function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado, betSide, ctx }) {
+function computeRestDays(recentMatches, nextMatchDate) {
+  if (!Array.isArray(recentMatches) || !recentMatches.length || !nextMatchDate) return null;
+  const lastGameDate = recentMatches[0]?.gameDate;
+  if (!lastGameDate) return null;
+  const diff = (new Date(nextMatchDate) - new Date(lastGameDate)) / 86400000;
+  return Number.isFinite(diff) && diff >= 0 ? Math.round(diff) : null;
+}
+
+function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado, betSide, ctx, nextMatchDate }) {
   const bestOdds = Math.max(bet365 || 0, winamax || 0);
   const gap = (winamax || 0) - (bet365 || 0);
 
@@ -825,10 +833,18 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
   }
   const G = tasa >= 0.68 ? 7 : tasa >= 0.55 ? 5 : tasa >= 0.42 ? 3 : 1;
 
-  const bajas = (ctx?.lesiones || []).filter((entry) => ["out", "doubtful"].includes(entry.status)).length;
+  const lesionesActivas = (ctx?.lesiones || []).filter((entry) => ["out", "doubtful"].includes(entry.status));
+  const bajas = lesionesActivas.length;
   const lineupCoverage = Boolean(ctx?.lineup_confirmed || ctx?.home_lineup_confirmed || ctx?.away_lineup_confirmed);
   const bothLineupsConfirmed = Boolean(ctx?.home_lineup_confirmed && ctx?.away_lineup_confirmed);
-  let H = bajas === 0 ? 7 : bajas === 1 ? 4 : bajas === 2 ? 1 : 0;
+  const positionWeightMap = { gk: 2.5, goalkeeper: 2.5, fw: 2.0, forward: 2.0, striker: 2.0, mf: 1.5, midfielder: 1.5, df: 1.0, defender: 1.0 };
+  const weightedBajas = lesionesActivas.reduce((sum, entry) => {
+    const pos = String(entry.position || "").toLowerCase();
+    const w = positionWeightMap[pos] ?? 1.2;
+    return sum + w;
+  }, 0);
+  const weightedBajasEffective = bajas > 0 ? weightedBajas / bajas : 0;
+  let H = weightedBajasEffective === 0 ? 7 : weightedBajasEffective < 1.5 ? 4 : weightedBajasEffective < 2.5 ? 1 : 0;
   if (!lineupCoverage) {
     H = Math.max(0, H - 3);
   } else if (bothLineupsConfirmed && bajas === 0) {
@@ -842,16 +858,6 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
   if (ev >= 0.05) senales += 1;
   if (drop12h >= 8 && dropBetSide === betSide) senales += 1;
   if (Math.abs(gap) >= 0.08) senales += 1;
-  // H2H como 4ª señal: historial apoya la selección
-  const h2hHomeRate = ctx?.h2h_home_win_rate;
-  const h2hAwayRate = ctx?.h2h_away_win_rate;
-  const h2hOver25Rate = ctx?.h2h_over25_rate;
-  const h2hAligned =
-    (betSide === "home" && Number.isFinite(h2hHomeRate) && h2hHomeRate >= 0.55) ||
-    (betSide === "away" && Number.isFinite(h2hAwayRate) && h2hAwayRate >= 0.55) ||
-    (betSide === "over" && Number.isFinite(h2hOver25Rate) && h2hOver25Rate >= 0.60) ||
-    (betSide === "under" && Number.isFinite(h2hOver25Rate) && h2hOver25Rate <= 0.35);
-  if (h2hAligned) senales += 1;
   const combinedBtts = averageFinite(ctx?.home_btts_rate, ctx?.away_btts_rate, ctx?.h2h_btts_rate, ctx?.model_btts_rate);
   const combinedOver25 = averageFinite(ctx?.home_over25_rate, ctx?.away_over25_rate, ctx?.h2h_over25_rate);
   const isGoalTotalMarket = mercado === "Totals" || mercado === "Totals HT" || String(mercado).includes("Team Total");
@@ -891,7 +897,32 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
 
   const J = senales >= 4 ? 8 : senales === 3 ? 6 : senales === 2 ? 4 : senales === 1 ? 2 : 0;
 
-  const total = A + B + C + D + E + F + G + H + I + J;
+  const restDaysHome = computeRestDays(ctx?.home_recent_matches, nextMatchDate);
+  const restDaysAway = computeRestDays(ctx?.away_recent_matches, nextMatchDate);
+  let K = 0;
+  if (Number.isFinite(restDaysHome) && Number.isFinite(restDaysAway)) {
+    const diff = restDaysHome - restDaysAway;
+    if (betSide === "home") {
+      K = diff >= 5 ? 3 : diff >= 3 ? 2 : 0;
+    } else if (betSide === "away") {
+      K = -diff >= 5 ? 3 : -diff >= 3 ? 2 : 0;
+    }
+  }
+
+  const h2hHomeRate = ctx?.h2h_home_win_rate;
+  const h2hAwayRate = ctx?.h2h_away_win_rate;
+  const h2hOver25Rate = ctx?.h2h_over25_rate;
+  let L = 0;
+  if (betSide === "home" && Number.isFinite(h2hHomeRate)) {
+    L = h2hHomeRate >= 0.65 ? 5 : h2hHomeRate >= 0.55 ? 3 : h2hHomeRate <= 0.35 ? 0 : 1;
+  } else if (betSide === "away" && Number.isFinite(h2hAwayRate)) {
+    L = h2hAwayRate >= 0.65 ? 5 : h2hAwayRate >= 0.55 ? 3 : h2hAwayRate <= 0.35 ? 0 : 1;
+  } else if ((betSide === "over" || betSide === "under") && Number.isFinite(h2hOver25Rate)) {
+    if (betSide === "over") L = h2hOver25Rate >= 0.65 ? 5 : h2hOver25Rate >= 0.55 ? 3 : 1;
+    else L = h2hOver25Rate <= 0.35 ? 5 : h2hOver25Rate <= 0.45 ? 3 : 1;
+  }
+
+  const total = A + B + C + D + E + F + G + H + I + J + K + L;
 
   return {
     total: Math.min(total, 100),
@@ -906,6 +937,10 @@ function calcularScorePick({ ev, drop12h, dropBetSide, bet365, winamax, mercado,
       H_lesiones: H,
       I_tabla: I,
       J_consistencia: J,
+      K_descanso: K,
+      L_h2h: L,
+      restDaysHome,
+      restDaysAway,
     },
     valueBook: gap > 0 ? "Winamax FR" : "Bet365",
     bestOdds,
@@ -1890,6 +1925,7 @@ export async function analyzeFootballSlate(dateStr) {
           mercado,
           betSide,
           ctx,
+          nextMatchDate: evento.date,
         });
 
         const pick = {

@@ -751,6 +751,40 @@ nav {
   color: #ff9944;
 }
 
+.pick-flag-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin: 2px 3px 2px 0;
+  font-weight: 600;
+}
+.pick-flag-badge.info    { background: var(--color-surface-2, #2a2a2a); color: var(--color-text-muted, #aaa); }
+.pick-flag-badge.warning { background: rgba(255,180,0,0.15); color: #f5a623; }
+.pick-flag-badge.danger  { background: rgba(220,50,50,0.15); color: #e05555; }
+.pick-flag-badge.good    { background: rgba(50,200,100,0.15); color: #3dc878; }
+
+.pick-score-display {
+  font-size: 0.75rem;
+  color: var(--text3, #888);
+  margin-top: 3px;
+}
+.pick-score-display strong { color: var(--text2, #bbb); }
+
+.score-adjusted-note {
+  font-size: 0.68rem;
+  color: var(--color-text-muted, #888);
+  margin-top: 2px;
+  font-style: italic;
+}
+
+.pick-flag-badges-block {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
 .best-pick-odds {
   text-align: right;
   width: 100%;

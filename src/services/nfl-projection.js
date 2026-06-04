@@ -1,6 +1,15 @@
 import { monteCarloSingleOver, monteCarloTotal, computeDynamicSigma } from "./pro-odds-scoring.js";
 
 const NFL_SIGMA_GAME = 7;
+
+const COLD_WEATHER_NFL_VENUES = new Set([
+  "soldier field", "highmark stadium", "lambeau field", "paycor stadium", "cleveland browns stadium",
+]);
+
+function isColdWeatherVenue(venueName) {
+  if (!venueName) return false;
+  return COLD_WEATHER_NFL_VENUES.has(String(venueName).toLowerCase().trim());
+}
 const NFL_SIGMA_1H = 4.5;
 const NFL_SIGMA_TEAM = 4.5;
 const MC_ITERATIONS = 5000;
@@ -93,6 +102,32 @@ export function projectNflFirstHalfTotal(ctx) {
   };
 }
 
+function redZoneFactor(redZonePct) {
+  if (!Number.isFinite(redZonePct)) return 1;
+  if (redZonePct >= 0.65) return 1.04;
+  if (redZonePct >= 0.55) return 1.02;
+  if (redZonePct < 0.40) return 0.97;
+  return 1;
+}
+
+function turnoverWinBonus(toDiff) {
+  if (!Number.isFinite(toDiff)) return 0;
+  if (toDiff >= 10) return 0.04;
+  if (toDiff >= 5) return 0.02;
+  if (toDiff <= -10) return -0.04;
+  if (toDiff <= -5) return -0.02;
+  return 0;
+}
+
+function resolveClimaFactor(ctx) {
+  const rawFactor = ctx.clima_factor ?? 1;
+  const venueName = ctx.venue?.fullName ?? ctx.venue?.name ?? "";
+  if (rawFactor !== 1 || !ctx.wind) return rawFactor;
+  const wind = Number(ctx.wind || 0);
+  if (isColdWeatherVenue(venueName) && wind > 15) return 0.90;
+  return rawFactor;
+}
+
 export function projectNflTeamTotal(ctx, side) {
   const avg = ctx.averages;
   const team = side === "home" ? ctx.home : ctx.away;
@@ -102,7 +137,9 @@ export function projectNflTeamTotal(ctx, side) {
   const qb = team?.qb_factor ?? 1;
   const fatigue = team?.fatigue?.factor ?? 1;
   const injuryPts = team?.injuryPenalty || 0;
-  const projected = (pts * 0.6 + defRival * 0.4) * yardsMatchupFactor(team, rival) * qb * (ctx.clima_factor ?? 1) * fatigue - injuryPts;
+  const clima = resolveClimaFactor(ctx);
+  const rzFactor = redZoneFactor(team?.form?.redZonePct);
+  const projected = (pts * 0.6 + defRival * 0.4) * yardsMatchupFactor(team, rival) * qb * clima * fatigue * rzFactor - injuryPts;
   return { pts: Math.max(10, projected), factors_used: Object.keys(FACTOR_WEIGHTS_NFL_TEAM) };
 }
 
@@ -142,7 +179,10 @@ export function projectNflMoneyline(ctx) {
   const yardEdge = Number.isFinite(homeYards) && Number.isFinite(awayYards) ? (homeYards - awayYards) / 100 : 0;
   const powerEdge = homeNet - awayNet;
   const qbEdge = (ctx.home?.qb_factor ?? 1) - (ctx.away?.qb_factor ?? 1);
-  const score = powerEdge * 0.04 + yardEdge * 0.025 + qbEdge * 0.25 + 0.08;
+  const homeToBonus = turnoverWinBonus(ctx.home?.form?.turnoverDifferential);
+  const awayToBonus = turnoverWinBonus(ctx.away?.form?.turnoverDifferential);
+  const toEdge = homeToBonus - awayToBonus;
+  const score = powerEdge * 0.04 + yardEdge * 0.025 + qbEdge * 0.25 + toEdge + 0.08;
   const probHome = 1 / (1 + Math.exp(-score * 2.2));
   return {
     probHome,

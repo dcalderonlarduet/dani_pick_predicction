@@ -2,6 +2,14 @@ import { clamp, round } from "../utils/math.js";
 import { fetchJson } from "../providers/shared/http.js";
 import { loadWithCache } from "../providers/shared/resource-cache.js";
 
+const MLB_STATS_API = "https://statsapi.mlb.com/api/v1";
+
+function _addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * Coordenadas del estadio y rumbo a CF (grados desde el norte, sentido horario).
  * cfBearing: dirección home plate → center field (para viento salida/entrada).
@@ -317,5 +325,102 @@ export async function loadGameWeather(teamId, gameStartIso, park = {}) {
     };
   } catch {
     return null;
+  }
+}
+
+export async function loadCurrentSeriesContext(homeTeamId, awayTeamId, dateStr) {
+  const startDate = _addDays(dateStr, -7);
+  const url = `${MLB_STATS_API}/schedule?sportId=1&startDate=${startDate}&endDate=${dateStr}&teamId=${homeTeamId}&hydrate=linescore`;
+  const cacheKey = `series-ctx:${homeTeamId}:${awayTeamId}:${dateStr}`;
+  const fallback = { gamesFound: 0, recentGames: [], avgTotalRuns: null, seriesMomentum: 'neutral', lastGameTotalRuns: null };
+  try {
+    const payload = await loadWithCache(
+      'mlb-series-context',
+      cacheKey,
+      { ttlMs: 30 * 60 * 1000, staleMs: 2 * 60 * 60 * 1000 },
+      () => fetchJson(url, { provider: 'mlb-stats-api:series-context', timeoutMs: 15000 })
+    );
+    const hId = String(homeTeamId);
+    const aId = String(awayTeamId);
+    const games = (payload?.dates || [])
+      .flatMap(d => d.games || [])
+      .filter(g => {
+        if (g?.status?.abstractGameState !== 'Final') return false;
+        const gHome = String(g?.teams?.home?.team?.id);
+        const gAway = String(g?.teams?.away?.team?.id);
+        return (gHome === hId && gAway === aId) || (gHome === aId && gAway === hId);
+      })
+      .sort((a, b) => String(b.officialDate || b.gameDate).localeCompare(String(a.officialDate || a.gameDate)))
+      .slice(0, 3);
+
+    if (!games.length) return fallback;
+
+    const recentGames = games.map(g => {
+      const homeScore = Number(g?.teams?.home?.score) || 0;
+      const awayScore = Number(g?.teams?.away?.score) || 0;
+      const totalRuns = homeScore + awayScore;
+      const winner = homeScore > awayScore ? String(g?.teams?.home?.team?.id) : String(g?.teams?.away?.team?.id);
+      return {
+        date: g.officialDate || String(g.gameDate || '').slice(0, 10),
+        homeScore,
+        awayScore,
+        totalRuns,
+        winner,
+      };
+    });
+
+    const avgTotalRuns = round(recentGames.reduce((s, g) => s + g.totalRuns, 0) / recentGames.length, 1);
+    const lastGameTotalRuns = recentGames[0]?.totalRuns ?? null;
+    const homeWins = recentGames.filter(g => g.winner === hId).length;
+    const awayWins = recentGames.filter(g => g.winner === aId).length;
+    const seriesMomentum = homeWins > awayWins ? 'home' : awayWins > homeWins ? 'away' : 'neutral';
+
+    return { gamesFound: recentGames.length, recentGames, avgTotalRuns, seriesMomentum, lastGameTotalRuns };
+  } catch {
+    return fallback;
+  }
+}
+
+export async function loadParkOuRecord(venueId, season) {
+  const empty = { overCount: 0, underCount: 0, pushCount: 0, totalGames: 0, ouRate: null, avgRunsPerGame: null, venueId, season };
+  if (!venueId) return empty;
+
+  const url = `${MLB_STATS_API}/schedule?sportId=1&season=${season}&venueIds=${venueId}&hydrate=linescore&gameType=R`;
+  const cacheKey = `park-ou:${venueId}:${season}`;
+
+  try {
+    const payload = await loadWithCache(
+      'mlb-park-ou',
+      cacheKey,
+      { ttlMs: 6 * 60 * 60 * 1000, staleMs: 24 * 60 * 60 * 1000 },
+      () => fetchJson(url, { provider: 'mlb-stats-api:park-ou', timeoutMs: 20000 })
+    );
+
+    const games = (payload?.dates || [])
+      .flatMap(d => d.games || [])
+      .filter(g => g?.status?.abstractGameState === 'Final');
+
+    if (!games.length) return empty;
+
+    const PROXY_LINE = 8.5;
+    let overCount = 0, underCount = 0, pushCount = 0, totalRunsSum = 0;
+
+    for (const g of games) {
+      const home = Number(g?.teams?.home?.score) || 0;
+      const away = Number(g?.teams?.away?.score) || 0;
+      const runs = home + away;
+      totalRunsSum += runs;
+      if (runs > PROXY_LINE) overCount++;
+      else if (runs < PROXY_LINE) underCount++;
+      else pushCount++;
+    }
+
+    const totalGames = games.length;
+    const ouRate = round(underCount / totalGames, 3);
+    const avgRunsPerGame = round(totalRunsSum / totalGames, 1);
+
+    return { overCount, underCount, pushCount, totalGames, ouRate, avgRunsPerGame, venueId, season };
+  } catch {
+    return empty;
   }
 }

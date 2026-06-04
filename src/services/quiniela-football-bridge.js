@@ -1,3 +1,5 @@
+const STOP_WORDS = new Set(["fc", "cf", "sd", "ud", "rc", "cd", "sc", "ac", "real", "atletico", "athletic", "sporting", "deportivo", "de", "la", "el", "los", "las"]);
+
 export function normalizeQuinielaTeamName(name) {
   return String(name || "")
     .normalize("NFD")
@@ -7,6 +9,14 @@ export function normalizeQuinielaTeamName(name) {
     .replace(/\s+de\s+/g, " ")
     .toLowerCase()
     .trim();
+}
+
+function tokenScore(nameA, nameB) {
+  const tokensA = nameA.split(/\s+/).filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+  const tokensB = nameB.split(/\s+/).filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+  if (!tokensA.length || !tokensB.length) return 0;
+  const common = tokensA.filter((t) => tokensB.includes(t)).length;
+  return common / Math.max(tokensA.length, tokensB.length);
 }
 
 function normalizeTeamName(name) {
@@ -76,13 +86,35 @@ export function resolveOfficialPartidoAgainstFootball(cardRow, byPair) {
   const home = normalizeTeamName(cardRow.home);
   const away = normalizeTeamName(cardRow.away);
   const direct = byPair.get(`${home}|${away}`);
-  if (direct) return direct;
+  if (direct) return { ...direct, bridgeMatchScore: 1.0 };
+
+  let bestScore = 0;
+  let bestPartido = null;
+  let bestSubstringOnly = false;
 
   for (const [key, partido] of byPair.entries()) {
     const [h, a] = key.split("|");
-    if ((h.includes(home) || home.includes(h)) && (a.includes(away) || away.includes(a))) {
-      return partido;
+    const hScore = tokenScore(home, h);
+    const aScore = tokenScore(away, a);
+    const combined = (hScore + aScore) / 2;
+    const substringMatch = (h.includes(home) || home.includes(h)) && (a.includes(away) || away.includes(a));
+    if (combined >= 0.5 && combined > bestScore) {
+      bestScore = combined;
+      bestPartido = partido;
+      bestSubstringOnly = false;
+    } else if (substringMatch && bestScore < 0.5) {
+      bestScore = Math.max(bestScore, 0.3);
+      bestPartido = partido;
+      bestSubstringOnly = true;
     }
+  }
+
+  if (bestPartido) {
+    return {
+      ...bestPartido,
+      bridgeMatchScore: Math.round(bestScore * 100) / 100,
+      bridgeLowConfidence: bestSubstringOnly || bestScore < 0.5,
+    };
   }
   return null;
 }

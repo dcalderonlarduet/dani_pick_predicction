@@ -14,6 +14,49 @@ Documento de handoff para continuar el proyecto sin depender del historial del c
 
 ---
 
+## 2026-06-04 - Tracker: auto-add picks verdes, settlement en tiempo real, UI mejorada
+
+### Archivos modificados
+- `public/index.html`
+
+### Auto-add de picks verdes al tracker
+- Nueva función `autoAddGreenPicksToTracker(moduleId)` — silenciosa, fire-and-forget.
+- Se llama al final de `commitModuleData()` tras cada carga de módulo (no desde caché de cliente).
+- Filtra `pick.estado === "verde" && pickIsValueCandidate(pick)`.
+- Usa `_autoAddedPickIds` (Set en memoria) para no repetir el POST en el mismo módulo/sesión.
+- El servidor deduplica por `pick_date + sport + partido + pick_label + mercado`; si ya existe devuelve `created: false` sin coste.
+- Quiniela excluida del auto-add (picks 1/X/2, no mercados bettable con cuota directa).
+- Tras añadir al menos un pick nuevo, refresca `loadStatsPanel`.
+
+### Settlement en tiempo real
+- **Intervalo estándar (existente)**: cada 5 min → `refreshTrackerPanelIfDue(false)`.
+- **Intervalo rápido (nuevo)**: cada 90 seg → si `hasTrackerPendingStarted()` (hay picks pendientes ya iniciados/en vivo), fuerza settle y refresco. Cuando no hay picks en juego, el intervalo no hace nada.
+- El settlement en servidor ya corría cada 5 min y cubre MLB, Fútbol, WNBA, Tennis via APIs externas.
+
+### Feed del tracker abierto por defecto
+- `renderTrackerFeedV2`: cuando no hay tab explícitamente seleccionado (`TRACKER_FEED_TAB_STATE[targetId]` === `undefined`), se abre el tab "Todos" automáticamente si hay picks.
+- El usuario puede cerrar/plegar el tab pulsando de nuevo (toggle existente, ahora `null` explícito para cerrar).
+
+### Señales de badges en tarjetas de pick (sesión anterior)
+- Textos de badges reescritos en lenguaje de aficionado:
+  - `⚠️ El pitcher parece mejor de lo que es — puede rendir peor` (antes: "Riesgo regresión ERA/xFIP")
+  - `🏟️ En este estadio suelen acabar con pocas/muchas carreras (X%) — N partidos analizados`
+  - `🔥/🧊 Últimos juegos entre estos dos: X.X carreras de media`
+  - `💤 Descanso: local Xd vs visitante Yd`
+  - `📊 Historial entre ellos: favorece al local/visitante`
+  - `📈 Local en racha: +X% vs su media esta temporada`
+  - `🏈 Balones robados (diferencial): local +X / visitante +Y`
+  - `⚠️ Algún equipo podría no jugarse nada — resultado menos predecible`
+  - Score ajustado: `Confianza 71/100 ⚠️` con tooltip "bajada por alertas del modelo"
+
+### Filtro de picks en pestaña Partidos
+- `_pickSemanticKey(pick)` — clave semántica normalizada por partido+mercado+betSide+selección.
+- `getTopPickIdentitySet(moduleId)` ahora devuelve `{ ids, semKeys }` en lugar de solo Set de IDs.
+- `isTopPickItem(item)` en `buildMatchRows` — comprueba ID y clave semántica para eliminar de Partidos cualquier pick que ya esté en TOP PICKS o MEJOR PICK.
+- Evita duplicación entre la sección de home y la pestaña de Partidos aunque los IDs no coincidan exactamente.
+
+---
+
 ## 2026-06-01 - Preparacion para GitHub
 
 - Repo destino: `https://github.com/dcalderonlarduet/dani_pick_predicction.git`.
@@ -1046,6 +1089,165 @@ Sin match correcto -> cuotas vacias -> EV=0 -> `sin_valor`. Critico para MLB/fut
 
 ### Despliegue
 - Tras cambiar `.env` Telegram: `docker compose up -d --force-recreate danny-pick` (o `--build` si cambia codigo del notifier).
+
+---
+
+## 2026-06-04 - Frontend: clasificación por deporte, badges campos nuevos, score visual ajustado por flags, rationale enriquecido automático
+
+### Archivos modificados
+- `public/index.html`
+- `public/styles.css`
+
+### FRONT-1 — Umbrales de clasificación por deporte
+- Nueva función `getThresholdsBySport(sport)` → `{ scoreVerde, confMin, confPodio, edgeMin }`.
+- `SPORT_THRESHOLDS` con valores específicos: MLB `{62,50,70,0.03}`, Fútbol `{62,55,72,0.05}`, NBA `{55,55,65,0.04}`, WNBA `{57,48,60,0.04}`, NFL `{62,52,68,0.04}`.
+- `BEST_PICK_CONF_MIN_BY_SPORT` actualizado a los nuevos `confPodio` (más estrictos que antes; MLB 65→70, fútbol 63→72, etc.).
+- `qualifiesBestPickOfDay()` ahora usa `thr.edgeMin` por deporte en vez del global `BEST_PICK_EDGE_MIN=0.08`.
+
+### FRONT-2 — Badges de campos nuevos
+- `findGameForPick(pick)` — busca el game object en `EVENTS_CACHE[sport]` por `matchId` para acceder a `proContext`, `homePitcher`, `context.home.form`, etc.
+- `buildPickFlagBadges(pick)` — genera badges HTML por deporte usando `.pick-flag-badge.{info|warning|danger|good}`:
+  - **MLB**: wRC+, ERA 4 salidas (si difiere >0.5 del ERA normal), riesgo regresión ERA/xFIP, estadio O/U record, serie reciente.
+  - **Fútbol**: días de descanso (factor K), xG proxy, H2H (factor L).
+  - **NBA**: form factor (racha/bajón), venue data flag early season.
+  - **WNBA**: venue data flag con conteo de partidos.
+  - **NFL**: turnover differential local vs visitante.
+  - **Quiniela**: motivationFlag, bridgeLowConfidence.
+- Badges se muestran en el modal de detalle del pick (`renderPickDetailModalContent`).
+
+### FRONT-3 — Score visual ajustado por flags
+- `computePickScoreDisplay(pick)` — aplica penalizaciones solo visuales:
+  - ERA regression risk: −4, early season venue: −3, bridge low confidence: −5, motivationFlag: −3, formFactor <0.92: −3.
+  - Clampea entre 40–95. `hasAdjustment=true` añade "⚠️" y tooltip.
+- Mostrado en `renderPickCard` (debajo de confianza) y en el modal de detalle como badge `Score X`.
+- El score real del backend no se modifica; solo es ajuste visual de riesgo.
+
+### FRONT-4 — Rationale enriquecido automático
+- `buildEnrichedRationaleAdditions(pick)` — añade frases en lenguaje natural al bloque "Por qué sale este pronóstico":
+  - **MLB**: wRC+ del lineup local, tendencia de parque (O/U%), divergencia ERA/xFIP del pitcher.
+  - **Fútbol**: diferencial de días de descanso, ventaja H2H confirmada.
+  - **NBA**: racha/bajón del equipo local (±5% vs media de temporada).
+  - Solo genera texto si los campos existen; no genera texto vacío.
+
+### CSS nuevos en styles.css
+- `.pick-flag-badge` con variantes `.info/.warning/.danger/.good`.
+- `.pick-score-display` y `.score-adjusted-note`.
+- `.pick-flag-badges-block` (contenedor flex-wrap).
+
+### Validación
+- HTTP 200 en `http://localhost:3000/`.
+- Sintaxis JS de funciones nuevas: OK (`node --check` sobre el bloque aislado).
+- La duplicación de `renderTennisContext` en el HTML es pre-existente (no introducida por estos cambios).
+- Chrome no conectado — verificación visual pendiente hasta próxima sesión.
+- `public/` está bind-mounted (`:ro`) — cambios reflejados sin rebuild Docker.
+
+### Badges verificables hoy (con datos reales)
+- **MLB**: `⚠️ Riesgo regresión ERA/xFIP` (cuando `ERA_REGRESSION_RISK_HOME/AWAY` en flags); `Estadio: X% Under / Y% Over`; `Serie: X c/partido`.
+- **WNBA**: ninguno hoy (venues con ≥3 juegos, venueDataFlag=null).
+- **NBA**: form factor si `recentScores` disponibles.
+- **NFL**: TO diff — off-season, sin datos.
+- **Fútbol**: K/L si hay picks con scores (sin picks hoy).
+- **Quiniela**: motivationFlag si temporada en últimas 6 semanas.
+
+---
+
+## 2026-06-04 - Mejoras multi-módulo: wRC+ MLB, blend park factor, ERA ponderada 4 salidas, días descanso fútbol, H2H factor independiente, xG proxy shots, lesiones por posición, NBA venue split real, form factor NBA, WNBA umbral H2H corregido, NFL turnover differential, red zone real, clima venue NFL, Quiniela 60/40 blend, motivación, bridge matching mejorado
+
+### Archivos modificados
+- `src/services/mlb-analyzer.js`
+- `src/services/mlb-model-enhancements.js`
+- `src/services/football-analyzer.js`
+- `src/providers/espn-soccer.js`
+- `src/providers/espn-nba.js`
+- `src/services/nba-projection.js`
+- `src/services/wnba-projection.js`
+- `src/providers/espn-wnba.js`
+- `src/providers/espn-nfl.js`
+- `src/services/nfl-projection.js`
+- `src/services/quiniela-probability.js`
+- `src/services/quiniela-football-bridge.js`
+
+### MLB
+- **wRC+ real**: `tierWrcPlus()` en `scoreSide()` — si `wRCPlus` viene de MLB Stats API, reemplaza `tierOpsProxy()` como entrada de calidad ofensiva. Actualmente null (MLB Stats API estándar no devuelve wRC+); cae a OPS como fallback correctamente.
+- **Park factor blended**: si `parkOuRecord.totalGames >= 15`, blendea `runFactor` estático (×0.60) con `avgRunsPerGame/9.0` (×0.40). Expuesto en `proContext.runFactorBlended` y `proContext.runFactorStatic`.
+- **ERA ponderada 4 salidas**: `computeWeightedRecentStartsEra()` en `mlb-model-enhancements.js`; pesos 0.40/0.30/0.20/0.10 sobre las 4 últimas salidas. Expuesto como `pitcher.recentStartsEra4w`.
+
+### Fútbol
+- **Factor K — días descanso** (0–3 pts): `computeRestDays()` usa `home_recent_matches[0].gameDate` vs `nextMatchDate`. Pasa `nextMatchDate: evento.date` en las 3 llamadas a `calcularScorePick()`. Expuesto en `scores.K_descanso`, `scores.restDaysHome/Away`.
+- **Factor H mejorado — lesiones por posición**: GK ×2.5, FW ×2.0, MF ×1.5, DF ×1.0, unknown ×1.2. Ponderación normalizada sobre los jugadores out/doubtful.
+- **Factor L — H2H independiente** (0–5 pts): extraído del factor J para evitar doble conteo. Escala por `h2h_home/away_win_rate` y `h2h_over25_rate`. Expuesto en `scores.L_h2h`.
+- **xG proxy con shots on target**: `blendXgWithShots()` en `espn-soccer.js` — si `shotsOnTargetAvg` disponible, calcula `xgProxy = shots × 0.33` y blendea `goalsForAvg × 0.60 + xgProxy × 0.40` como lambda de Dixon-Coles.
+
+### NBA
+- **Venue split real**: `enrichNbaVenueScoring()` en `espn-nba.js` — mismo patrón que WNBA. Carga schedule ESPN del equipo, calcula `ptsPerGameHome/Away` de últimos 5 juegos en cada venue. Mínimo 2 juegos para ser válido. `venueDataFlag: 'EARLY_SEASON_NBA_VENUE_PROXY'` si <3 juegos. Expuesto en `context.home.form.ptsPerGameHome/Away`.
+- **Form factor activo**: en `projectNbaTeamTotal()` — si `recentScores` disponibles, calcula `formFactor = avg5 / seasonAvg`, clampado [0.88, 1.12]. Usa `ptsPerGameHome/Away` en lugar del multiplicador 1.02/0.98 hardcoded.
+
+### WNBA
+- **Umbral H2H corregido**: `h2hAvg < 100` → `h2hAvg < 140` en `applyH2HAdjustment()`. Los matchups WNBA con totales reales 155–175 ya se aplican correctamente.
+- **Flag early season venue**: cuando `homeScores.length < 3 || awayScores.length < 3`, añade `venueDataFlag: 'EARLY_SEASON_VENUE_PROXY'` y `venueGamesCount: {home, away}` al form.
+
+### NFL
+- **Turnover differential** (proxy DVOA): `extractTurnoverDiff()` en `espn-nfl.js` extrae intercepciones capturadas + fumbles recuperados − intercepciones lanzadas − fumbles perdidos desde season stats ESPN. Ajuste en `projectNflMoneyline()`: ±2–4% win probability según TO differential.
+- **Red zone efficiency real**: `extractRedZonePct()` de drives/boxscore ESPN. Multiplicador en `projectNflTeamTotal()`: ≥65% → ×1.04, ≥55% → ×1.02, <40% → ×0.97.
+- **Clima por venue ajustado**: `COLD_WEATHER_NFL_VENUES` (Soldier Field, Highmark, Lambeau, Paycor, Cleveland Browns Stadium). Umbral viento reducido de 20 a 15 mph para esos estadios outdoor fríos. `resolveClimaFactor()` en `nfl-projection.js`.
+
+### Quiniela
+- **Blend 60/40 base** (antes 65/35): `wModel=0.60, wMarket=0.40`. Si `bundle.mlOdds.books.length >= 3` → 50/50. Condiciones dinámicas existentes se mantienen sobre la nueva base.
+- **Factor motivación**: `applyMotivationFactor()` — en las últimas 6 semanas de temporada, si equipo en posición extrema (top-2 o relegación), reduce confianza −4 pp. Expuesto como `motivationFlag` en propuestaOficial.
+- **Bridge matching mejorado**: `tokenScore()` — normaliza nombres, tokeniza, calcula ratio tokens en común / max(tokens). Score ≥0.5 → match válido; score <0.5 pero substring sí machea → acepta con `bridgeLowConfidence=true`. Previene falsos positivos con nombres similares.
+
+### Validación post-deploy (2026-06-04)
+- `node --check` OK en todos los archivos modificados.
+- Docker Compose rebuild OK; `danny-pick` recreado.
+- `/api/health` → `status: ok`, `analysisDate: 2026-06-04`.
+- MLB: 6 picks, `runFactorBlended: 1.017`, `runFactorStatic: 1.05`, `recentStartsEra4w: 0`.
+- Fútbol: 12 partidos, 0 picks (sin valor hoy); factores K/L integrados (verificado por código).
+- WNBA: 1 pick, `context.home.form.ptsPerGameHome: 78`, `venueGamesCount: {home:5, away:5}`, `venueDataFlag: null` (correcto, ≥3 juegos).
+- NBA: `context.home.form.ptsPerGameHome: 112` (venue split activo).
+- NFL: off-season (0 games); código verificado por `node --check`.
+- Quiniela: 14 propuestas, `dataAvailable: true`; blend 60/40 activo.
+
+---
+
+## 2026-06-04 - MLB fixes: ERA regression flag, elite pitcher v2, series context, park O/U record
+
+### Cambios implementados (solo MLB, sin tocar fútbol/tenis/NBA/WNBA/NFL/Quiniela)
+
+**Fix #1 — ERA/xFIP divergencia flag**
+- En `buildGameContext()` (`mlb-analyzer.js`): si `|xFip30 - era30| > 1.5` para cualquier abridor, se marca `pitcher.eraRegressionRisk=true` y `pitcher.eraRegressionGap`.
+- Se añaden flags `ERA_REGRESSION_RISK_HOME` / `ERA_REGRESSION_RISK_AWAY` al array `game.flags`.
+- En `projectTeamRuns()`: si `opposingPitcher.eraRegressionRisk`, se aplica multiplicador `×1.12` sobre `recentBaseAdjusted` (el pitcher juega con suerte; se espera regresión → más carreras).
+- Expuesto en `games[].homePitcher.eraRegressionRisk`, `eraRegressionGap`, `games[].proContext.flags`.
+
+**Fix #2 — Elite pitcher multiplier v2**
+- `elitePitcherMultiplier(pitcher)` ahora recibe objeto pitcher completo en vez de solo `eff`.
+- Nuevas condiciones WHIP + K/9: ERA≤2.5 + WHIP≤1.00 + K9≥9.0 → 0.72; ERA≤2.5 + WHIP≤1.10 → 0.75; ERA≤3.0 + K9≥9.0 → 0.82. Resto mantiene valores previos.
+
+**Fix #3 — Contexto de serie actual**
+- Nueva función `loadCurrentSeriesContext(homeTeamId, awayTeamId, dateStr)` en `mlb-game-context.js`.
+- Consulta MLB Stats API `/schedule` últimos 7 días entre los dos equipos; calcula `avgTotalRuns`, `seriesMomentum`, `lastGameTotalRuns`, `gamesFound`.
+- Cache 30 min TTL / 2 h stale. Se carga en paralelo en `buildGameContext()`.
+- En `buildTotalRecommendation()`: si `gamesFound >= 2`, aplica blend `80% proyección + 20% avgTotalRuns`.
+- Expuesto en `games[].proContext.seriesContext`.
+
+**Fix #4 — Park O/U record dinámico**
+- Nueva función `loadParkOuRecord(venueId, season)` en `mlb-game-context.js`.
+- Consulta MLB Stats API todos los partidos regulares del venue en la temporada; usa línea proxy 8.5 para clasificar Over/Under.
+- Cache 6 h TTL / 24 h stale.
+- En `buildTotalRecommendation()`: si `totalGames >= 15` y `underRate > 0.60` → factor 0.92 + flag `PARK_UNDER_TREND`; `overRate > 0.60` → factor 1.08 + flag `PARK_OVER_TREND`.
+- Expuesto en `games[].proContext.parkOuRecord` y `games[].weather.parkOuRecord`.
+
+**Fix #5 — UI (public/index.html)**
+- En `renderMlbContext()`: nuevo bloque de pills expandibles bajo las duel cards:
+  - Serie reciente: `X carr./partido promedio` con badge 🔥 si >9 o 🧊 si <7 (cuando `gamesFound >= 2`).
+  - Estadio: `X% Under / Y% Over esta temporada (N partidos)` con color rojo/verde/gris (cuando `totalGames >= 15`).
+  - Badge amarillo ERA/xFIP gap para cualquier abridor con `eraRegressionRisk=true`.
+
+### Validación post-deploy (2026-06-04)
+- `node --check` OK en `mlb-analyzer.js` y `mlb-game-context.js`.
+- Docker Compose rebuild OK; `danny-pick` recreado.
+- `/api/health` → `status: ok`, `analysisDate: 2026-06-04`.
+- `/api/mlb/analyze?refresh=1` → `picks: 6`, `seriesContext.gamesFound: 2`, `parkOuRecord.totalGames: 32`, `flags: ["ERA_REGRESSION_RISK_HOME"]`, `homePitcher.eraRegressionGap: 2.43`.
 
 ---
 

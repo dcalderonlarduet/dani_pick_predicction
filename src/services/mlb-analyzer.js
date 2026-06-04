@@ -58,6 +58,7 @@ import {
   applyMarketAnchor,
   bestMlbTotalsQuote,
   computeRecentStartsEra,
+  computeWeightedRecentStartsEra,
   lineupLeftHandPct,
   calibrateRunLineProbability,
   computeOffenseVsPitcherMatchup,
@@ -76,6 +77,8 @@ import {
   computeScheduleFatigue,
   loadGameWeather,
   weatherRunAdjustment,
+  loadCurrentSeriesContext,
+  loadParkOuRecord,
 } from "./mlb-game-context.js";
 
 const MLB_STATS_BASE_URL = "https://statsapi.mlb.com/api/v1";
@@ -408,6 +411,14 @@ function tierOpsProxy(value) {
   if (value > 0.76) return 10;
   if (value >= 0.72) return 6;
   return 2;
+}
+
+function tierWrcPlus(value) {
+  if (!Number.isFinite(value) || value < 50 || value > 250) return null;
+  if (value >= 115) return 10;
+  if (value >= 105) return 7;
+  if (value >= 95) return 5;
+  return 3;
 }
 
 function tierSplitAdvantage(diff) {
@@ -799,7 +810,7 @@ async function loadTeamContext(team, opposingPitcherHandCode, isHomeTeam, date, 
       homeAwayOps: asNumber(splitHomeAway?.ops, asNumber(hittingSeason?.ops)),
       rispAvg: asNumber(splitRisp?.avg, asNumber(hittingSeason?.avg)),
       rispOps: asNumber(splitRisp?.ops, asNumber(hittingSeason?.ops)),
-      wrcPlus: null,
+      wrcPlus: (() => { const v = asNumber(hittingSeason?.wRCPlus ?? hittingSeason?.wrcPlus, NaN); return Number.isFinite(v) && v >= 50 && v <= 250 ? v : null; })(),
       recentGames: recentRuns.games.slice(0, 10),
     },
     bullpen: (() => {
@@ -864,6 +875,7 @@ async function loadPitcherContext(pitcherId, pitcherName, opponentTeamId, schedu
   const daysRest = lastStartDate ? daysBetween(lastStartDate, scheduledAt) : 5;
   const historyVsOpponent = computeHistoryVsOpponent([safeArray(gameLogCurrent?.stats?.[0]?.splits)], opponentTeamId);
   const recentStartsEra = computeRecentStartsEra(gameLogSplits);
+  const recentStartsEra4w = computeWeightedRecentStartsEra(gameLogSplits);
   const era30 = asNumber(recentStatLine?.era, NaN);
   const fip30 = Number.isFinite(recentFip) ? round(recentFip, 2) : null;
   const xFip30 = Number.isFinite(recentMetric) ? round(recentMetric, 2) : null;
@@ -906,6 +918,7 @@ async function loadPitcherContext(pitcherId, pitcherName, opponentTeamId, schedu
     fip30,
     xFip30,
     recentStartsEra,
+    recentStartsEra4w,
     regressedRunMetric: historyMeta.metric,
     whip30,
     k9,
@@ -1016,8 +1029,14 @@ function moneylineModelProbability(sideRaw, rivalRaw) {
   return clamp(0.5 + diff / 80, 0.18, 0.86);
 }
 
-function elitePitcherMultiplier(eff) {
+function elitePitcherMultiplier(pitcher) {
+  const eff = effectivePitcherRunMetric(pitcher);
+  const whip = Number.isFinite(pitcher?.whip30) ? pitcher.whip30 : 1.24;
+  const k9 = Number.isFinite(pitcher?.k9) ? pitcher.k9 : 0;
+  if (eff <= 2.5 && whip <= 1.00 && k9 >= 9.0) return 0.72;
   if (eff <= 2.0) return 0.72;
+  if (eff <= 2.5 && whip <= 1.10) return 0.75;
+  if (eff <= 3.0 && k9 >= 9.0) return 0.82;
   if (eff <= 2.5) return 0.78;
   if (eff <= 3.0) return 0.85;
   if (eff <= 3.5) return 0.92;
@@ -1036,7 +1055,10 @@ function projectTeamRuns(offense, opposingPitcher, opposingBullpen, park, opposi
   const bullpenEra = effectiveBullpenEra(opposingBullpen, leftPct);
   const bullpenPitches = asNumber(opposingBullpen.usage48hPitches, 0);
   const recentBase = recent10 * 0.4 + recent20 * 0.35 + recent30 * 0.25;
-  const recentBaseAdjusted = recentBase * elitePitcherMultiplier(pitcherRunMetric);
+  let recentBaseAdjusted = recentBase * elitePitcherMultiplier(opposingPitcher);
+  if (opposingPitcher?.eraRegressionRisk) {
+    recentBaseAdjusted *= 1.12;
+  }
   const offenseVsPitcher = computeOffenseVsPitcherMatchup(offense, opposingPitcher);
   const pitcherPenalty =
     (pitcherRunMetric - 4.05) * 0.3 +
@@ -1167,8 +1189,9 @@ function scoreSide(game, side) {
   const seasonOpsProxy = locationOps || ownTeam.offense.splitVsHandOps || ownTeam.offense.seasonOps;
   const splitDiff = seasonOpsProxy - ownTeam.offense.seasonOps;
   const trendDiff = ownTeam.offense.runsLast10 - ownTeam.offense.seasonRunsPerGame;
+  const wrcScore = tierWrcPlus(ownTeam.offense.wrcPlus);
   const offenseScore =
-    tierOpsProxy(seasonOpsProxy) +
+    (wrcScore !== null ? wrcScore : tierOpsProxy(seasonOpsProxy)) +
     tierSplitAdvantage(splitDiff) +
     tierRunTrend(trendDiff) +
     Math.round(offenseVsRivalPitcher.scorePoints);
@@ -1387,7 +1410,23 @@ function buildTotalRecommendation(game) {
       game.homePitcher?.handCode,
       game.awayTeam.lineup?.leftHandPct
     );
-  const totalProjection = game.projections?.totalRuns ?? round(homeProjection + awayProjection, 2);
+  let totalProjection = game.projections?.totalRuns ?? round(homeProjection + awayProjection, 2);
+  if (game.seriesContext?.gamesFound >= 2 && Number.isFinite(game.seriesContext.avgTotalRuns)) {
+    totalProjection = round(totalProjection * 0.80 + game.seriesContext.avgTotalRuns * 0.20, 2);
+  }
+  if (game.parkOuRecord?.totalGames >= 15 && Number.isFinite(game.parkOuRecord.ouRate)) {
+    const underRate = game.parkOuRecord.ouRate;
+    const overRate = game.parkOuRecord.totalGames > 0 ? round(game.parkOuRecord.overCount / game.parkOuRecord.totalGames, 3) : 0;
+    if (underRate > 0.60) {
+      totalProjection = round(totalProjection * 0.92, 2);
+      game.flags = game.flags || [];
+      if (!game.flags.includes('PARK_UNDER_TREND')) game.flags.push('PARK_UNDER_TREND');
+    } else if (overRate > 0.60) {
+      totalProjection = round(totalProjection * 1.08, 2);
+      game.flags = game.flags || [];
+      if (!game.flags.includes('PARK_OVER_TREND')) game.flags.push('PARK_OVER_TREND');
+    }
+  }
   const preliminaryWantsOver = totalProjection >= game.totalsLine;
   const preliminaryQuote =
     bestMlbTotalsQuote(game.bookmakers, preliminaryWantsOver, game.totalsLine) ||
@@ -2166,6 +2205,18 @@ async function buildGameContext(rawGame, date, oddsMap, caches, hasOddsConfigure
     notes: [],
   };
 
+  game.flags = [];
+  if (Number.isFinite(homePitcher.xFip30) && Number.isFinite(homePitcher.era30) && Math.abs(homePitcher.xFip30 - homePitcher.era30) > 1.5) {
+    homePitcher.eraRegressionRisk = true;
+    homePitcher.eraRegressionGap = round(Math.abs(homePitcher.xFip30 - homePitcher.era30), 2);
+    game.flags.push('ERA_REGRESSION_RISK_HOME');
+  }
+  if (Number.isFinite(awayPitcher.xFip30) && Number.isFinite(awayPitcher.era30) && Math.abs(awayPitcher.xFip30 - awayPitcher.era30) > 1.5) {
+    awayPitcher.eraRegressionRisk = true;
+    awayPitcher.eraRegressionGap = round(Math.abs(awayPitcher.xFip30 - awayPitcher.era30), 2);
+    game.flags.push('ERA_REGRESSION_RISK_AWAY');
+  }
+
   game.bothLineupsConfirmed = Boolean(homeTeam.lineup.confirmed && awayTeam.lineup.confirmed);
   game.hasPendingPitcher = hasPendingPitcher;
   game.pitcherDataQuality = hasPendingPitcher ? "pending" : isMlbStructuralDataFresh(homePitcher, awayPitcher, homeTeam, awayTeam) ? "full" : "partial";
@@ -2182,7 +2233,9 @@ async function buildGameContext(rawGame, date, oddsMap, caches, hasOddsConfigure
     starterStatus: awayPitcher.status,
     pitcherName: awayPitcher.name,
   });
-  const [lmMoneyline, lmTotals] = await Promise.all([
+  const venueId = rawGame?.venue?.id || null;
+  const gameSeason = Number(String(rawGame?.gameDate || date).slice(0, 4)) || new Date().getUTCFullYear();
+  const [lmMoneyline, lmTotals, seriesCtx, parkOuRec] = await Promise.all([
     getOddsHarvesterMatchContext({
       home: homeTeam.name,
       away: awayTeam.name,
@@ -2201,7 +2254,22 @@ async function buildGameContext(rawGame, date, oddsMap, caches, hasOddsConfigure
       scheduleDate: date,
       startTime: rawGame?.gameDate,
     }).catch(() => null),
+    loadCurrentSeriesContext(homeTeamRaw.id, awayTeamRaw.id, date).catch(() => ({ gamesFound: 0, recentGames: [], avgTotalRuns: null, seriesMomentum: 'neutral', lastGameTotalRuns: null })),
+    loadParkOuRecord(venueId, gameSeason).catch(() => ({ totalGames: 0, overCount: 0, underCount: 0, pushCount: 0, ouRate: null, avgRunsPerGame: null, venueId, season: gameSeason })),
   ]);
+  game.seriesContext = seriesCtx;
+  game.parkOuRecord = parkOuRec;
+  if (game.weather && parkOuRec) {
+    game.weather.parkOuRecord = parkOuRec;
+  }
+  if (parkOuRec?.totalGames >= 15 && Number.isFinite(parkOuRec.avgRunsPerGame)) {
+    const staticFactor = game.park.runFactor;
+    const dynamicFactor = parkOuRec.avgRunsPerGame / 9.0;
+    const blended = round(staticFactor * 0.60 + dynamicFactor * 0.40, 3);
+    game.park.runFactorStatic = staticFactor;
+    game.park.runFactor = blended;
+    game.park.runFactorBlended = blended;
+  }
   game.lineMovementInput = {
     pct_tickets_home: lmMoneyline?.pct_tickets_home ?? 50,
     pct_tickets_away: lmMoneyline?.pct_tickets_away ?? (lmMoneyline?.pct_tickets_home != null ? 100 - lmMoneyline.pct_tickets_home : 50),
@@ -2267,6 +2335,11 @@ async function buildGameContext(rawGame, date, oddsMap, caches, hasOddsConfigure
       overPct: percent(game.simulation.overProb),
       expectedTotal: game.simulation.expectedTotal,
     },
+    seriesContext: game.seriesContext || null,
+    parkOuRecord: game.parkOuRecord || null,
+    runFactorBlended: game.park.runFactorBlended ?? null,
+    runFactorStatic: game.park.runFactorStatic ?? null,
+    flags: game.flags || [],
   };
 
   const homeScore = scoreSide(game, "home");

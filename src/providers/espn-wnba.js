@@ -120,10 +120,13 @@ function enrichWnbaVenueScoring(form, schedulePayload, teamId, beforeIso = null)
   if (!form) return form;
   const homeScores = extractVenueScores(schedulePayload, teamId, "home", { beforeIso });
   const awayScores = extractVenueScores(schedulePayload, teamId, "away", { beforeIso });
+  const earlySeasonVenue = homeScores.length < 3 || awayScores.length < 3;
   return {
     ...form,
     ptsPerGameHome: averageScores(homeScores),
     ptsPerGameAway: averageScores(awayScores),
+    venueDataFlag: earlySeasonVenue ? 'EARLY_SEASON_VENUE_PROXY' : null,
+    venueGamesCount: { home: homeScores.length, away: awayScores.length },
     recentScores: Array.isArray(form.recentScores) && form.recentScores.length
       ? form.recentScores
       : [...homeScores, ...awayScores].slice(0, FORMA_SAMPLE_TT),

@@ -34,7 +34,58 @@ export const ESPN_NBA = {
   roster: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{id}/roster",
   standings: "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings",
   news: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/news",
+  schedule: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{id}/schedule?season={yr}",
 };
+
+function readScheduleScore(competitor) {
+  const score = competitor?.score;
+  return Number(
+    score?.value ?? score?.displayValue ?? score ??
+    competitor?.team?.score?.value ?? competitor?.team?.score?.displayValue ?? competitor?.team?.score
+  );
+}
+
+function extractNbaVenueScores(schedulePayload, teamId, venue, { limit = 5, beforeIso = null } = {}) {
+  const events = schedulePayload?.events || schedulePayload?.team?.events || [];
+  const venueKey = String(venue || "").toLowerCase();
+  const cutoffMs = beforeIso ? new Date(beforeIso).getTime() : Date.now();
+  return (Array.isArray(events) ? events : [])
+    .slice()
+    .sort((a, b) => new Date(b?.date || b?.competitions?.[0]?.date || 0) - new Date(a?.date || a?.competitions?.[0]?.date || 0))
+    .flatMap((event) => {
+      const eventMs = new Date(event?.date || event?.competitions?.[0]?.date || 0).getTime();
+      if (Number.isFinite(cutoffMs) && Number.isFinite(eventMs) && eventMs >= cutoffMs) return [];
+      const status = String(event?.competitions?.[0]?.status?.type?.name || event?.status?.type?.name || "").toLowerCase();
+      const competitors = event?.competitions?.[0]?.competitors || [];
+      const mine = competitors.find((row) => String(row?.team?.id || row?.id) === String(teamId));
+      if (!mine || String(mine?.homeAway || "").toLowerCase() !== venueKey) return [];
+      const score = readScheduleScore(mine);
+      if (!/final|post|completed/.test(status) && !Number.isFinite(score)) return [];
+      return Number.isFinite(score) && score > 0 ? [score] : [];
+    })
+    .slice(0, limit);
+}
+
+function enrichNbaVenueScoring(form, schedulePayload, teamId, beforeIso = null) {
+  if (!form) return form;
+  const homeScores = extractNbaVenueScores(schedulePayload, teamId, "home", { beforeIso });
+  const awayScores = extractNbaVenueScores(schedulePayload, teamId, "away", { beforeIso });
+  const ptsPerGameHome = homeScores.length >= 2 ? homeScores.reduce((s, v) => s + v, 0) / homeScores.length : null;
+  const ptsPerGameAway = awayScores.length >= 2 ? awayScores.reduce((s, v) => s + v, 0) / awayScores.length : null;
+  const venueGamesHome = homeScores.length;
+  const venueGamesAway = awayScores.length;
+  return {
+    ...form,
+    ptsPerGameHome: ptsPerGameHome ?? (Number.isFinite(form.ptsPerGame) ? form.ptsPerGame * 1.015 : null),
+    ptsPerGameAway: ptsPerGameAway ?? (Number.isFinite(form.ptsPerGame) ? form.ptsPerGame * 0.985 : null),
+    venueDataFlag: (venueGamesHome < 3 || venueGamesAway < 3) ? 'EARLY_SEASON_NBA_VENUE_PROXY' : null,
+    venueGamesHome,
+    venueGamesAway,
+    recentScores: Array.isArray(form.recentScores) && form.recentScores.length
+      ? form.recentScores
+      : [...homeScores, ...awayScores].slice(0, 10),
+  };
+}
 
 export async function loadNbaScoreboard(date) {
   return fetchScoreboard(ESPN_NBA.scoreboard, date, "nba");
@@ -122,10 +173,18 @@ async function buildEspnNbaContext({ date, home, away, eventId, events }) {
 
   const { teams } = match;
   const seasonYear = espnSeasonYear(date, "nba");
-  const [summary, homeSeasonStats, awaySeasonStats] = await Promise.all([
+  const [summary, homeSeasonStats, awaySeasonStats, homeSchedule, awaySchedule] = await Promise.all([
     loadNbaSummary(teams.eventId),
     fetchEspnTeamSeasonStats(ESPN_NBA.stats, teams.homeId, seasonYear),
     fetchEspnTeamSeasonStats(ESPN_NBA.stats, teams.awayId, seasonYear),
+    fetchEspnJson(
+      ESPN_NBA.schedule.replace("{id}", teams.homeId).replace("{yr}", String(seasonYear)),
+      `espn-nba-schedule|${teams.homeId}|${seasonYear}`
+    ).catch(() => null),
+    fetchEspnJson(
+      ESPN_NBA.schedule.replace("{id}", teams.awayId).replace("{yr}", String(seasonYear)),
+      `espn-nba-schedule|${teams.awayId}|${seasonYear}`
+    ).catch(() => null),
   ]);
   source_log.summary = "espn";
   if (homeSeasonStats || awaySeasonStats) source_log.season_stats = "espn";
@@ -153,16 +212,18 @@ async function buildEspnNbaContext({ date, home, away, eventId, events }) {
   ]);
   source_log.injury_impact = "minutes-usage-onoff";
 
-  const homeForm =
+  const homeFormRaw =
     parseEspnSeasonTeamForm(homeSeasonStats, "nba") ||
     parseEspnRecentForm(summary, "home", "nba") ||
     buildFormFromSummary(summary, "home", "nba") ||
     leagueDefaultForm("home", teams.homeId);
-  const awayForm =
+  const awayFormRaw =
     parseEspnSeasonTeamForm(awaySeasonStats, "nba") ||
     parseEspnRecentForm(summary, "away", "nba") ||
     buildFormFromSummary(summary, "away", "nba") ||
     leagueDefaultForm("away", teams.awayId);
+  const homeForm = enrichNbaVenueScoring(homeFormRaw, homeSchedule, teams.homeId, teams.startIso);
+  const awayForm = enrichNbaVenueScoring(awayFormRaw, awaySchedule, teams.awayId, teams.startIso);
 
   if (!parseEspnSeasonTeamForm(homeSeasonStats, "nba")) {
     warnMissingEspnField("season_stats", teams.homeId);

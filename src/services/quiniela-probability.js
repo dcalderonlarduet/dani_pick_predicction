@@ -337,8 +337,10 @@ export function buildQuinielaFinalProbs(bundle = {}) {
   }
 
   const disagreement = maxSignDisagreement(model, market);
-  let wModel = 0.65;
-  let wMarket = 0.35;
+  const bookmakerCount = Array.isArray(bundle.mlOdds?.books) ? bundle.mlOdds.books.length : 0;
+  let wModel = 0.60;
+  let wMarket = 0.40;
+  if (bookmakerCount >= 3) { wModel = 0.50; wMarket = 0.50; }
   if (disagreement > MODEL_MARKET_DISAGREE_THRESHOLD) {
     wModel = 0.40;
     wMarket = 0.60;
@@ -357,10 +359,12 @@ export function buildQuinielaFinalProbs(bundle = {}) {
   const lmAdjust = applyLineMovementToQuiniela(probs, bundle);
   probs = lmAdjust.probs;
 
-  const confidence = round(
+  const confidenceRaw = round(
     clamp(dataQuality * (1 - disagreement * 0.85) + lmAdjust.confidenceDelta, 0, 0.95),
     2
   );
+  const motivResult = applyMotivationFactor(bundle, confidenceRaw, bundle.closingTime);
+  const confidence = motivResult.confidence;
 
   return {
     probs,
@@ -380,7 +384,26 @@ export function buildQuinielaFinalProbs(bundle = {}) {
     lineTrapOnFavorite: lmAdjust.lineTrapOnFavorite,
     forceDouble: lmAdjust.forceDouble,
     lineMovementNote: lmAdjust.lineMovementNote,
+    motivationFlag: motivResult.motivationFlag,
   };
+}
+
+export function applyMotivationFactor(bundle, confidence, closingTime) {
+  const ctx = bundle.footballCtx || {};
+  const homePos = Number(ctx.home_position ?? ctx.posicion);
+  const awayPos = Number(ctx.away_position);
+  const totalTeams = Number(ctx.total_equipos || 20);
+  if (!Number.isFinite(homePos) && !Number.isFinite(awayPos)) return { confidence, motivationFlag: null };
+  const closingDate = closingTime ? new Date(closingTime) : null;
+  const now = new Date();
+  const weeksLeft = closingDate ? (closingDate.getTime() - now.getTime()) / (7 * 86400000) : 99;
+  if (weeksLeft > 6) return { confidence, motivationFlag: null };
+  const extremeHome = Number.isFinite(homePos) && (homePos <= 2 || homePos >= totalTeams - 2);
+  const extremeAway = Number.isFinite(awayPos) && (awayPos <= 2 || awayPos >= totalTeams - 2);
+  if (!extremeHome && !extremeAway) return { confidence, motivationFlag: null };
+  const newConf = Math.max(0, confidence - 0.04);
+  const flag = extremeHome && extremeAway ? 'BOTH_EXTREME_POSITION' : extremeHome ? 'HOME_EXTREME_POSITION' : 'AWAY_EXTREME_POSITION';
+  return { confidence: round(newConf, 2), motivationFlag: flag };
 }
 
 export function signsFromProbabilities(probs) {
