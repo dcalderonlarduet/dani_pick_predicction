@@ -1,6 +1,53 @@
 import { clamp, round } from "../utils/math.js";
 
 export const MAX_QUINIELA_DOUBLES = 4;
+
+// Ciudades con altitud significativa y su bonus para el equipo local
+const HIGH_ALTITUDE_VENUES = {
+  "la paz": { altitudeM: 3600, homeBonus: 0.12 },
+  "quito": { altitudeM: 2800, homeBonus: 0.08 },
+  "bogota": { altitudeM: 2600, homeBonus: 0.07 },
+  "bogotá": { altitudeM: 2600, homeBonus: 0.07 },
+  "cusco": { altitudeM: 3400, homeBonus: 0.10 },
+  "cochabamba": { altitudeM: 2500, homeBonus: 0.06 },
+  "sucre": { altitudeM: 2810, homeBonus: 0.08 },
+};
+
+// Selecciones nacionales que juegan en altura por defecto
+const HIGH_ALTITUDE_TEAMS = {
+  "bolivia": "la paz",
+  "ecuador": "quito",
+  "colombia": "bogota",
+  "peru": "cusco",
+};
+
+function detectAltitudeVenue(homeTeam, venueCity) {
+  const teamN = String(homeTeam || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  const cityFromTeam = HIGH_ALTITUDE_TEAMS[teamN];
+  const search = cityFromTeam || String(venueCity || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  if (!search) return null;
+  for (const [city, data] of Object.entries(HIGH_ALTITUDE_VENUES)) {
+    const cityN = city.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+    if (search.includes(cityN)) return { city, ...data };
+  }
+  return null;
+}
+
+export function applyAltitudeFactor(probs, homeTeam, venueCity) {
+  if (!probs) return { probs, altitudeFlag: null };
+  const alt = detectAltitudeVenue(homeTeam, venueCity);
+  if (!alt) return { probs, altitudeFlag: null };
+  const bonus = alt.homeBonus;
+  const p1New = clamp(probs.p1 + bonus, 0, 0.95);
+  const excess = p1New - probs.p1;
+  const pxNew = clamp(probs.px - excess * 0.5, 0.05, 0.95);
+  const p2New = clamp(probs.p2 - excess * 0.5, 0.05, 0.95);
+  const normalized = normalizeProbs(p1New, pxNew, p2New);
+  return {
+    probs: normalized ?? probs,
+    altitudeFlag: { city: alt.city, altitudeM: alt.altitudeM, homeBonus: bonus },
+  };
+}
 export const FIJO_MIN_TOP_PROB = 0.50;
 export const FIJO_MIN_EDGE = 0.12;
 export const FIJO_MIN_CONFIDENCE = 0.70;
@@ -279,6 +326,8 @@ export function buildQuinielaFinalProbs(bundle = {}) {
   const model = modelEntry ? { p1: modelEntry.p1, px: modelEntry.px, p2: modelEntry.p2 } : null;
   const market = impliedProbsFromMlOdds(bundle.mlOdds);
   const dataQuality = computeDataQuality(bundle);
+  const homeTeam = bundle.home || bundle.homeTeam?.name || "";
+  const venueCity = bundle.venueCity || "";
 
   if (dataQuality < LOW_DATA_QUALITY && !model && !market) {
     return {

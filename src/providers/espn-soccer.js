@@ -31,8 +31,17 @@ const LEAGUE_MAPPINGS = [
   { test: /(coupe de france)/i, slug: "fra.coupe_de_france" },
 ];
 
-// Ligas españolas a intentar para enriquecer filas de la quiniela sin match
-const SPAIN_QUINIELA_SLUGS = ["esp.1", "esp.2", "esp.copa_del_rey"];
+// Ligas a intentar para enriquecer filas de la quiniela sin match (domésticas + internacionales)
+const SPAIN_QUINIELA_SLUGS = [
+  "esp.1", "esp.2", "esp.copa_del_rey",
+  "laliga2.promotion",
+  "uefa.nations",
+  "fifa.worldq.uefa",
+  "fifa.worldq.conmebol",
+  "fifa.worldq.concacaf",
+  "fifa.worldq.caf",
+  "friendly.m",
+];
 
 function shiftDateStr(dateStr, days) {
   try {

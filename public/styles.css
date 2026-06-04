@@ -4845,6 +4845,9 @@ body.modal-open {
 .quiniela-ticket-main { min-width: 0; }
 .quiniela-ticket-match { font-size: 12px; color: var(--text); font-weight: 700; }
 .quiniela-ticket-why { margin-top: 4px; font-size: 10px; color: var(--text3); line-height: 1.4; }
+.quiniela-ticket-badges { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 2px; }
+.quiniela-ticket-badges .pick-flag-badge { font-size: 0.68rem; padding: 1px 5px; }
+.quiniela-prob-dist { margin-top: 4px; font-size: 10px; color: var(--text3); font-family: var(--font-mono); letter-spacing: 0.01em; }
 .quiniela-ticket-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 118px; }
 .quiniela-verdict {
   display: inline-flex;

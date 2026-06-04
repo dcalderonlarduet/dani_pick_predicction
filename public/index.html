@@ -3580,6 +3580,20 @@ function renderQuinielaBrief(data, options = {}) {
                   ${quinielaAltOptions(row, view)}
                   ${row.lineTrapActive && typeof renderLineTrapBlock === "function" ? renderLineTrapBlock(row, { compact: true }) : ""}
                   ${row.explicacion ? `<div class="quiniela-ticket-why">${esc(row.explicacion)}</div>` : ""}
+                  ${(() => {
+                    const ds = row.dataSource || "no-data";
+                    const dsLabel = ds === "football-desk" || ds === "espn-direct" || ds === "blend" || ds === "espn+odds" ? "✅ Datos completos"
+                      : ds === "odds-only" || ds === "market-only" ? "📊 Solo cuotas"
+                      : ds === "fifa-ranking-only" ? "🌍 Solo ranking FIFA"
+                      : "⚠️ Sin datos";
+                    const dsCls = ds.includes("espn") || ds.includes("football-desk") || ds.includes("blend") ? "good"
+                      : ds.includes("odds") || ds.includes("market") ? "warning"
+                      : ds.includes("fifa") ? "info"
+                      : "danger";
+                    const altBadge = row.altitudeFlag ? `<span class="pick-flag-badge info">⛰️ Altitud (${row.altitudeFlag.city} ${row.altitudeFlag.altitudeM}m)</span>` : "";
+                    const probLine = row.probabilities ? `<div class="quiniela-prob-dist">1 · ${row.probabilities.p1Pct}% &nbsp;|&nbsp; X · ${row.probabilities.pxPct}% &nbsp;|&nbsp; 2 · ${row.probabilities.p2Pct}%</div>` : "";
+                    return `<div class="quiniela-ticket-badges"><span class="pick-flag-badge ${dsCls}">${dsLabel}</span>${altBadge}</div>${probLine}`;
+                  })()}
                 </div>
                 <div class="quiniela-ticket-right">
                   ${quinielaVerdictDisplay(row)}

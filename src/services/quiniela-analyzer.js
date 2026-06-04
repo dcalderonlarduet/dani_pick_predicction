@@ -13,6 +13,11 @@ import {
   loadFootballForQuiniela,
 } from "./quiniela-request-cache.js";
 import {
+  loadFootballEvents,
+  loadFootballOddsMulti,
+} from "../providers/odds-api-io.js";
+import { fifaRankingProbs } from "../providers/fifa-rankings.js";
+import {
   buildFootballMatchBundle,
   bundleToMatchShape,
   indexFootballPartidos,
@@ -22,6 +27,7 @@ import {
   MAX_QUINIELA_DOUBLES,
   applyQuinielaDoubleCap,
   applyQuinielaFijoOnly,
+  applyAltitudeFactor,
   buildQuinielaFinalProbs,
   evaluateFijoDobleOptions,
   signsFromProbabilities,
@@ -331,6 +337,16 @@ function buildPropuestaRowFromPartido(partido, idx, { soloFijos = false } = {}) 
     pct_public_away: p0.pct_public_away ?? null,
     quinielaSign: q.favoritoSign || null,
     betSide: p0.betSide || null,
+    dataSource: partido.quinielaMeta?.dataSource || partido.quinielaMeta?.bridgeSource || "no-data",
+    probabilities: q.probs ? {
+      p1Pct: Math.round((q.probs.p1 ?? 0) * 100),
+      pxPct: Math.round((q.probs.px ?? 0) * 100),
+      p2Pct: Math.round((q.probs.p2 ?? 0) * 100),
+    } : null,
+    altitudeFlag: partido.quinielaMeta?.altitudeFlag || null,
+    rankHome: partido.quinielaMeta?.rankHome ?? null,
+    rankAway: partido.quinielaMeta?.rankAway ?? null,
+    flags: partido.quinielaMeta?.flags || [],
   };
 }
 
@@ -635,6 +651,113 @@ async function loadOfficialQuinielaCard() {
   };
 }
 
+/** Normaliza nombre de equipo para fuzzy matching con eventos de Odds-API.io. */
+function _normTeam(name) {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Extrae las cuotas ML (home/draw/away) de un entry de odds/multi. */
+function _extractMlOddsFromOddsEntry(oddsEntry) {
+  const bookmakers = oddsEntry?.bookmakers;
+  if (!bookmakers || typeof bookmakers !== "object") return null;
+  const books = Array.isArray(bookmakers) ? bookmakers : Object.values(bookmakers);
+  for (const book of books) {
+    const ml = book?.ML || book?.winner || book?.moneyline;
+    if (!ml) continue;
+    const home = Number(ml.home ?? ml[0] ?? 0);
+    const draw = Number(ml.draw ?? ml.tie ?? ml[2] ?? 0);
+    const away = Number(ml.away ?? ml[1] ?? 0);
+    if (home > 1 && draw > 1 && away > 1) {
+      return { home, draw, away, books: [book.bookmaker || book.name || "market"] };
+    }
+  }
+  return null;
+}
+
+/**
+ * Enriquece los pickCandidates inciertos con cuotas de Odds-API.io.
+ * Muta candidates en su lugar; recomputa finalResult/probs/signs si encuentra cuotas.
+ */
+async function _enrichUncertainBundlesWithOdds(candidates, footballEvents) {
+  const uncertainOnes = candidates.filter((c) => c.isPlaceholder);
+  if (!uncertainOnes.length || !footballEvents.length) return;
+
+  // Fuzzy match: nombre de equipo contra eventos de Odds-API.io
+  const matchedEventIds = [];
+  const matchedIndices = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    if (!c.isPlaceholder) continue;
+    const homeN = _normTeam(c.bundle.home);
+    const awayN = _normTeam(c.bundle.away);
+    if (!homeN || !awayN) continue;
+
+    let bestEvent = null;
+    let bestScore = 0;
+    for (const event of footballEvents) {
+      const h = _normTeam(event.home || event.homeTeam || "");
+      const a = _normTeam(event.away || event.awayTeam || "");
+      const hTokens = homeN.split(" ").filter((t) => t.length > 2);
+      const aTokens = awayN.split(" ").filter((t) => t.length > 2);
+      const hMatch = h.includes(homeN) || homeN.includes(h) ? 1
+        : hTokens.some((t) => h.includes(t)) ? 0.5 : 0;
+      const aMatch = a.includes(awayN) || awayN.includes(a) ? 1
+        : aTokens.some((t) => a.includes(t)) ? 0.5 : 0;
+      const score = (hMatch + aMatch) / 2;
+      if (score >= 0.5 && score > bestScore) {
+        bestScore = score;
+        bestEvent = event;
+      }
+    }
+
+    if (bestEvent) {
+      const eventId = bestEvent.id || bestEvent.eventId;
+      matchedEventIds.push(eventId);
+      matchedIndices.push(i);
+    }
+  }
+
+  if (!matchedEventIds.length) return;
+
+  const oddsData = await loadFootballOddsMulti(matchedEventIds).catch(() => []);
+  if (!oddsData.length) return;
+
+  for (let j = 0; j < matchedIndices.length; j++) {
+    const candIdx = matchedIndices[j];
+    const eventId = matchedEventIds[j];
+    const oddsEntry = oddsData.find((o) => o.id === eventId || o.eventId === eventId);
+    if (!oddsEntry) continue;
+    const mlOdds = _extractMlOddsFromOddsEntry(oddsEntry);
+    if (!mlOdds) continue;
+
+    // Enriquecer el bundle con las cuotas encontradas
+    const candidate = candidates[candIdx];
+    candidate.bundle = {
+      ...candidate.bundle,
+      mlOdds,
+      dataSource: "odds-only",
+      isPlaceholder: false,
+    };
+
+    // Recomputar probabilidades con el bundle enriquecido
+    const finalResult = buildQuinielaFinalProbs(candidate.bundle);
+    const probs = finalResult.probs;
+    if (probs) {
+      candidate.finalResult = finalResult;
+      candidate.probs = probs;
+      candidate.signs = signsFromProbabilities(probs);
+      candidate.isPlaceholder = false;
+    }
+  }
+}
+
 export async function buildQuinielaAnalysis(date) {
   const officialPeek = peekOfficialQuinielaCardCached();
   const officialFromCache = Boolean(
@@ -716,6 +839,9 @@ export async function buildQuinielaAnalysis(date) {
   }).catch(() => ({ data: {}, layer: "error", skippedRemoteBuild: false }));
   const espnDirect = espnResult.data || {};
 
+  // Cargar eventos de Odds-API.io para el fallback de cuotas
+  const footballEvents = await loadFootballEvents().catch(() => []);
+
   const pickCandidates = cardRows.map((entry, index) => {
     const bundle = buildFootballMatchBundle(entry, byPair, espnDirect);
     const finalResult = buildQuinielaFinalProbs(bundle);
@@ -732,6 +858,53 @@ export async function buildQuinielaAnalysis(date) {
       index,
     };
   });
+
+  // Q-1: Enriquecer bundles sin datos con cuotas de Odds-API.io
+  await _enrichUncertainBundlesWithOdds(pickCandidates, footballEvents);
+
+  // Q-4: Fallback FIFA ranking para bundles que siguen sin datos
+  for (const candidate of pickCandidates) {
+    if (!candidate.isPlaceholder || candidate.probs) continue;
+    const { bundle } = candidate;
+    const homeTeam = bundle.home || "";
+    const awayTeam = bundle.away || "";
+    const fifaResult = fifaRankingProbs(homeTeam, awayTeam);
+    if (fifaResult) {
+      const { p1, px, p2 } = fifaResult;
+      candidate.probs = { p1, px, p2 };
+      candidate.signs = signsFromProbabilities({ p1, px, p2 });
+      candidate.isPlaceholder = false;
+      candidate.finalResult = {
+        ...candidate.finalResult,
+        probs: { p1, px, p2 },
+        method: "fifa-ranking-only",
+        dataQuality: 0.20,
+        confidence: 0.30,
+        rankHome: fifaResult.rankHome,
+        rankAway: fifaResult.rankAway,
+        rankDiff: fifaResult.rankDiff,
+      };
+      candidate.bundle = { ...bundle, dataSource: "fifa-ranking-only" };
+    }
+  }
+
+  // Q-3: Aplicar factor altitud sobre probs finales (después de todos los fallbacks)
+  for (const candidate of pickCandidates) {
+    if (!candidate.probs) continue;
+    const homeTeam = candidate.bundle.home || "";
+    const venueCity = candidate.bundle.venueCity || "";
+    const { probs: altProbs, altitudeFlag } = applyAltitudeFactor(candidate.probs, homeTeam, venueCity);
+    if (altitudeFlag) {
+      candidate.probs = altProbs;
+      candidate.signs = signsFromProbabilities(altProbs);
+      candidate.altitudeFlag = altitudeFlag;
+      candidate.bundle = {
+        ...candidate.bundle,
+        flags: [...(candidate.bundle.flags || []), "HIGH_ALTITUDE_MATCH"],
+        altitudeFlag,
+      };
+    }
+  }
 
   const finalizedPicks = finalizeQuinielaPicks(pickCandidates);
   const finalizedPicksMinima = finalizeQuinielaPicks(pickCandidates, { fijoOnly: true });
@@ -767,10 +940,15 @@ export async function buildQuinielaAnalysis(date) {
         disagreement: finalResult?.disagreement ?? null,
         method: finalResult?.method || null,
         bridgeSource: candidate.bundle?.bridgeSource || null,
+        dataSource: candidate.bundle?.dataSource || "no-data",
         uncertain: Boolean(finalResult?.uncertain || !probs),
         lineMovement: finalResult?.lineMovement?.tipo || null,
         lineTrapOnFavorite: Boolean(finalResult?.lineTrapOnFavorite),
         forceDouble: Boolean(finalResult?.forceDouble),
+        altitudeFlag: candidate.altitudeFlag || null,
+        rankHome: finalResult?.rankHome ?? null,
+        rankAway: finalResult?.rankAway ?? null,
+        flags: candidate.bundle?.flags || [],
       },
       picks: [pick],
       sin_valor: pick.estado === "sin_valor" ? [pick] : [],

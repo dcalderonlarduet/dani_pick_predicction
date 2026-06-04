@@ -14,6 +14,65 @@ Documento de handoff para continuar el proyecto sin depender del historial del c
 
 ---
 
+## 2026-06-04 - Quiniela: fallback cuotas para selecciones, ESPN slugs internacionales, factor altitud, rankings FIFA, badges calidad datos UI. Partidos con datos: 1/14 → 13/14
+
+### Archivos modificados / creados
+- `src/services/quiniela-analyzer.js`
+- `src/services/quiniela-probability.js`
+- `src/providers/espn-soccer.js`
+- `src/providers/fifa-rankings.js` (nuevo)
+- `public/index.html`
+- `public/styles.css`
+
+### Q-1 — Fallback cuotas Odds-API.io para partidos sin datos ESPN
+- Nueva función `_enrichUncertainBundlesWithOdds(candidates, footballEvents)` en `quiniela-analyzer.js`.
+- Llama a `loadFootballEvents()` (ya disponible) para obtener todos los eventos de fútbol activos de Odds-API.io.
+- Fuzzy matching por nombre de equipo (tokens + substring) para identificar el partido.
+- Si encuentra match: llama `loadFootballOddsMulti([eventId])`, extrae ML home/draw/away, actualiza el bundle con `dataSource: "odds-only"`, recomputa probabilidades.
+- Si no encuentra cuotas: pasa al fallback FIFA ranking.
+- Hoy: Odds-API.io no tenía eventos en su feed para estos partidos → 0 partidos por esta vía.
+
+### Q-2 — ESPN slugs internacionales en SPAIN_QUINIELA_SLUGS
+- `src/providers/espn-soccer.js` — `SPAIN_QUINIELA_SLUGS` ampliado con:
+  `"laliga2.promotion"`, `"uefa.nations"`, `"fifa.worldq.uefa"`, `"fifa.worldq.conmebol"`, `"fifa.worldq.concacaf"`, `"fifa.worldq.caf"`, `"friendly.m"`
+- Si ESPN no tiene datos para esos slugs, falla silenciosamente.
+
+### Q-3 — Factor altitud para partidos en ciudades de altura
+- Constante `HIGH_ALTITUDE_VENUES` en `quiniela-probability.js` con La Paz (+12%), Quito (+8%), Bogotá (+7%), Cusco (+10%), Cochabamba (+6%), Sucre (+8%).
+- Mapa `HIGH_ALTITUDE_TEAMS` para selecciones nacionales: bolivia→la paz, ecuador→quito, colombia→bogota, peru→cusco.
+- Función `applyAltitudeFactor(probs, homeTeam, venueCity)` — si el equipo local juega en altura, suma homeBonus a p1 y redistribuye proporcional en px/p2.
+- Se aplica DESPUÉS de todos los fallbacks (ESPN + cuotas + FIFA) en el pipeline.
+- Bolivia vs Escocia hoy: 1:37% X:22% 2:41% con flag ⛰️ (vs 1:25% X:28% 2:47% sin altitud).
+
+### Q-4 — Rankings FIFA hardcoded como último recurso
+- Nuevo archivo `src/providers/fifa-rankings.js` con top ~140 países en español e inglés.
+- Función `getFifaRank(countryName)` con fuzzy matching por substring.
+- Función `fifaRankingProbs(homeTeam, awayTeam)` calcula p1/px/p2 basado en diferencia de ranking: >80 posiciones → ventaja masiva (72%/18%/10%), >50 → clara (58%/22%/20%), >20 → moderada (46%/28%/26%), <20 → neutro (34%/32%/34%).
+- `dataQuality: 0.20`, `confidence: 0.30` (marca claramente que es baja confianza).
+- **Impacto hoy**: 12 partidos pasaron de "1 por defecto" a probabilidades reales por ranking.
+  - Liechtenstein vs Chipre: 1:8% X:18% 2:74% → signo "2" (antes "1" incorrecto)
+  - Bolivia vs Escocia: 1:37% X:22% 2:41% ⛰️ → signo "2" con altitud (más preciso)
+  - Bélgica vs Túnez: 1:58% X:22% 2:20% → signo "1"
+  - Portugal vs Chile: 1:46% X:28% 2:26% → signo "1"
+  - etc.
+
+### Q-5 — Badges de calidad de datos en UI Quiniela
+- Cada fila del boleto muestra un badge de color:
+  - ✅ verde "Datos completos" (ESPN/football-desk)
+  - 📊 amarillo "Solo cuotas" (odds-only)
+  - 🌍 gris "Solo ranking FIFA" (fifa-ranking-only)
+  - ⚠️ rojo "Sin datos" (no-data)
+- Badge azul ⛰️ con ciudad y altitud cuando aplica `HIGH_ALTITUDE_MATCH`.
+- Distribución de probabilidades 1/X/2 en % debajo del explicación de cada partido.
+- CSS: `.quiniela-ticket-badges`, `.quiniela-prob-dist` en `styles.css`.
+
+### Resultado final (2026-06-04, Jornada 66)
+- **Antes**: 1/14 partidos con datos reales → 13 asignaban signo "1" por defecto.
+- **Después**: 13/14 partidos con probabilidades reales (1 ESPN + 12 FIFA ranking).
+- **Sin datos**: 1/14 — Las Palmas vs Málaga (no en Odds-API.io ni ESPN ese día).
+
+---
+
 ## 2026-06-04 - Tracker: auto-add picks verdes, settlement en tiempo real, UI mejorada
 
 ### Archivos modificados
